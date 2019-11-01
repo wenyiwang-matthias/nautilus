@@ -354,7 +354,7 @@ static int handler(excp_entry_t *exp, excp_vec_t vec, void *priv_data)
 
     struct virtio_net_dev *d = (struct virtio_net_dev *) priv_data;
 
-    if (d->virtio_dev->itype == VIRTIO_PCI_LEGACY) {
+    if (d->virtio_dev->itype == VIRTIO_PCI_LEGACY_INTERRUPT) {
         // read ISR status field
         uint8_t isr = virtio_pci_read_regb(d->virtio_dev, ISR_STATUS);
 
@@ -637,7 +637,7 @@ int virtio_net_init(struct virtio_pci_dev *dev)
     uint16_t i;
 
     // now set up interrupts
-    if (dev->itype==VIRTIO_PCI_MSI_X) {
+    if (dev->itype==VIRTIO_PCI_MSI_X_INTERRUPT) {
         // we assume MSI-X has been enabled on the device
         // already, that virtqueue setup is done, and
         // that queue i has been mapped to MSI-X table entry i

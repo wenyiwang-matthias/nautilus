@@ -34,6 +34,11 @@
 #define MAX_VIRTQS 4
 #define VIRTIO_MSI_NO_VECTOR 0xffff
 
+enum virtio_pci_dev_model {
+    VIRTIO_PCI_LEGACY_MODEL = 0,
+    VIRTIO_PCI_MODERN_MODEL
+} ;
+
 // Virtio spec as of 4/18
 enum virtio_pci_dev_type {
     VIRTIO_PCI_UNKNOWN = -1,
@@ -57,8 +62,8 @@ enum virtio_pci_dev_type {
 };
 
 enum virtio_pci_int_type {
-    VIRTIO_PCI_LEGACY = 0,
-    VIRTIO_PCI_MSI_X
+    VIRTIO_PCI_LEGACY_INTERRUPT = 0,
+    VIRTIO_PCI_MSI_X_INTERRUPT
 };
 
 enum virtio_pci_register_access_method_type { NONE=-1, MEMORY=0, IO};
@@ -87,9 +92,9 @@ struct virtio_pci_virtq {
 
 // Generic info for a PCI_device
 struct virtio_pci_dev {
-    // our type
-    enum virtio_pci_dev_type type;
-    enum virtio_pci_int_type itype;
+    enum virtio_pci_dev_model model;
+    enum virtio_pci_dev_type  type;
+    enum virtio_pci_int_type  itype;
     
     // our internal state, set by specific driver
     void      *state;
@@ -156,7 +161,9 @@ static inline uint32_t virtio_pci_read_regl(struct virtio_pci_dev *dev, uint32_t
     uint32_t result;
     if (dev->method==MEMORY) {
         uint64_t addr = dev->mem_start + offset;
-        __asm__ __volatile__ ("movl (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+        //__asm__ __volatile__ ("movl (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+	result = *(uint32_t *)addr;
+	printk("lread of offset %lx (target %lx) returns %x\n",offset,addr,result);
     } else {
         result = inl(dev->ioport_start+offset);
     }
@@ -168,7 +175,9 @@ static inline uint16_t virtio_pci_read_regw(struct virtio_pci_dev *dev, uint32_t
     uint16_t result;
     if (dev->method==MEMORY) {
         uint64_t addr = dev->mem_start + offset;
-        __asm__ __volatile__ ("movw (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+	result = *(uint16_t *)addr;
+        //__asm__ __volatile__ ("movw (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+	printk("wread of offset %lx (target %lx) returns %x\n",offset,addr,result);
     } else {
         result = inw(dev->ioport_start+offset);
     }
@@ -180,7 +189,9 @@ static inline uint8_t virtio_pci_read_regb(struct virtio_pci_dev *dev, uint32_t 
     uint8_t result;
     if (dev->method==MEMORY) {
         uint64_t addr = dev->mem_start + offset;
-        __asm__ __volatile__ ("movb (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+	result = *(uint8_t *)addr;
+        //__asm__ __volatile__ ("movb (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+	printk("bread of offset %lx (target %lx) returns %x\n",offset,addr,result);
     } else {
         result = inb(dev->ioport_start+offset);
     }
@@ -191,7 +202,9 @@ static inline void virtio_pci_write_regl(struct virtio_pci_dev *dev, uint32_t of
 {
     if (dev->method==MEMORY) { 
         uint64_t addr = dev->mem_start + offset;
-        __asm__ __volatile__ ("movl %1, (%0)" : "=r"(addr): "r"(data) : "memory");
+        // maybe the same bug as in the hda code? __asm__ __volatile__ ("movl %1, (%0)" : "=r"(addr): "r"(data) : "memory");
+	*(uint32_t *)addr = data;
+	printk("lwrite of offset %lx (target %lx) with %x\n",offset,addr,data);
     } else {
         outl(data,dev->ioport_start+offset);
     }
@@ -201,7 +214,9 @@ static inline void virtio_pci_write_regw(struct virtio_pci_dev *dev, uint32_t of
 {
     if (dev->method==MEMORY) { 
         uint64_t addr = dev->mem_start + offset;
-        __asm__ __volatile__ ("movw %1, (%0)" : "=r"(addr): "r"(data) : "memory");
+	//        __asm__ __volatile__ ("movw %1, (%0)" : "=r"(addr): "r"(data) : "memory");
+	*(uint16_t *)addr = data;	
+	printk("wwrite of offset %lx (target %lx) with %x\n",offset,addr,data);
     } else {
         outw(data,dev->ioport_start+offset);
     }
@@ -211,7 +226,9 @@ static inline void virtio_pci_write_regb(struct virtio_pci_dev *dev, uint32_t of
 {
     if (dev->method==MEMORY) { 
         uint64_t addr = dev->mem_start + offset;
-        __asm__ __volatile__ ("movb %1, (%0)" : "=r"(addr): "r"(data) : "memory");
+	*(uint8_t *)addr = data;	
+	printk("bwrite of offset %lx (target %lx) with %x\n",offset,addr,data);
+        // __asm__ __volatile__ ("movb %1, (%0)" : "=r"(addr): "r"(data) : "memory");
     } else {
         outb(data,dev->ioport_start+offset);
     }
@@ -235,7 +252,7 @@ static inline void virtio_pci_write_regb(struct virtio_pci_dev *dev, uint32_t of
 
 static inline uint32_t virtio_pci_device_regs_start(struct virtio_pci_dev *v)
 {
-    return v->itype==VIRTIO_PCI_MSI_X ? DEVICE_REGS_START_MSI_X : DEVICE_REGS_START_LEGACY;
+    return v->itype==VIRTIO_PCI_MSI_X_INTERRUPT ? DEVICE_REGS_START_MSI_X : DEVICE_REGS_START_LEGACY;
 }
 
 

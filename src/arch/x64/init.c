@@ -434,7 +434,7 @@ init (unsigned long mbd,
 
 #ifdef NAUT_CONFIG_VESA
     vesa_init();
-    // vesa_test();
+    vesa_test();
 #endif
 
     smp_bringup_aps(naut);

@@ -37,6 +37,10 @@
 #include <dev/virtio_blk.h>
 #endif
 
+#ifdef NAUT_CONFIG_VIRTIO_GPU
+#include <dev/virtio_gpu.h>
+#endif
+
 #ifndef NAUT_CONFIG_DEBUG_VIRTIO_PCI
 #undef DEBUG_PRINT
 #define DEBUG_PRINT(fmt, args...)
@@ -55,6 +59,282 @@
 // list of virtio devices
 static struct list_head dev_list;
 
+#define u8 uint8_t
+#define le32 uint32_t
+
+
+// DEVICE STATUS masks and values
+#define DEV_STATUS_RESET              0
+#define DEV_STATUS_ACKNOWLEDGE        1
+#define DEV_STATUS_DRIVER             2
+#define DEV_STATUS_DRIVER_OK          4
+#define DEV_STATUS_FEATURES_OK        8
+#define DEV_STATUS_DEVICE_NEEDS_RESET 64
+#define DEV_STATUS_FAILED             128
+
+
+struct virtio_pci_cap {
+    u8 cap_vndr;    /* Generic PCI field: PCI_CAP_ID_VNDR */
+    u8 cap_next;    /* Generic PCI field: next ptr. */
+    u8 cap_len;     /* Generic PCI field: capability length */
+    u8 cfg_type;    /* Identifies the structure. */
+    u8 bar;         /* Where to find it. */
+    u8 padding[3];  /* Pad to full dword. */
+    le32 offset;    /* Offset within bar. */
+    le32 length;    /* Length of the structure, in bytes. */
+};
+
+/* Common configuration */
+#define VIRTIO_PCI_CAP_COMMON_CFG        1
+/* Notifications */
+#define VIRTIO_PCI_CAP_NOTIFY_CFG        2
+/* ISR Status */
+#define VIRTIO_PCI_CAP_ISR_CFG           3
+/* Device specific configuration */
+#define VIRTIO_PCI_CAP_DEVICE_CFG        4
+/* PCI configuration access */
+#define VIRTIO_PCI_CAP_PCI_CFG           5
+
+// Need virtio_pci_common_cfg here
+
+// Probably best to factor this into a virtio_pci_legacy.c and
+// virtio_pci.c...
+//
+//
+// Alternatively - why is there not a transitional/legacy
+// interface for virtio-gpu? 
+
+
+static int is_legacy(struct virtio_pci_dev *vdev)
+{
+    struct pci_dev *pdev = vdev->pci_dev;
+    struct pci_cfg_space *cfg = &pdev->cfg;
+
+    return (cfg->device_id>=0x1000 && cfg->device_id<=0x1009) || (cfg->rev_id==0) || (cfg->dev_cfg.subsys_id<0x40);
+}
+
+static int is_modern(struct virtio_pci_dev *vdev)
+{
+    return !is_legacy(vdev);
+}
+    
+
+static void modern_config_cap(void *state, void *data)
+{
+    struct virtio_pci_dev *vdev = (struct virtio_pci_dev *)state;
+    struct virtio_pci_cap *cap = (struct virtio_pci_cap *)data;
+    struct pci_dev *pdev = vdev->pci_dev;
+
+    if (cap->cap_vndr==0x9) {
+	// vendor cap on a virtio pci device
+	// encodes important stuff
+	DEBUG("pci cap cfg_type 0x%x bar %u offset 0x%x length 0x%x\n",
+	      cap->cfg_type, cap->bar, cap->offset, cap->length);
+
+	switch (cap->cfg_type) {
+	case VIRTIO_PCI_CAP_COMMON_CFG: {
+	    uint64_t len;
+	    // set up our basic config
+	    DEBUG("common config - bar=%d, baroffset=0x%x, len=0x%x\n",
+		  cap->bar, cap->offset, cap->length);
+
+	    switch (pci_dev_get_bar_type(pdev,cap->bar)) {
+	    case PCI_BAR_IO:
+		vdev->ioport_start = pci_dev_get_bar_addr(pdev,cap->bar) + cap->offset;
+		len = pci_dev_get_bar_size(pdev,cap->bar);
+		DEBUG("bar length is 0x%lx\n",len);
+		vdev->ioport_end = vdev->ioport_start + cap->length;
+		vdev->method = IO;
+		break;
+	    case PCI_BAR_MEM:
+		vdev->mem_start = pci_dev_get_bar_addr(pdev,cap->bar) + cap->offset;
+		len = pci_dev_get_bar_size(pdev,cap->bar);
+		DEBUG("bar length is 0x%lx\n",len);
+		vdev->mem_end = vdev->mem_start + cap->length;
+		vdev->method = MEMORY;
+		break;
+	    default:
+		ERROR("Unknown access method - huh?\n");
+		vdev->method = NONE;
+		break;
+	    }
+	}
+	    break;
+	case VIRTIO_PCI_CAP_NOTIFY_CFG: {
+	    DEBUG("notify config - skipped\n");
+	}
+	    break;
+	case VIRTIO_PCI_CAP_ISR_CFG:  {
+	    DEBUG("isr config - skipped\n");
+	}
+	    break;
+	case VIRTIO_PCI_CAP_DEVICE_CFG: {
+	    DEBUG("device-specific config - skipped\n");
+	}
+	    break;
+	case VIRTIO_PCI_CAP_PCI_CFG: {
+	    DEBUG("pci config - skipped\n");
+	}
+	    break;
+	default:
+	    ERROR("unknown config type %d skipped\n", cap->cfg_type);
+	    break;
+	}
+	    
+	    
+    }
+}
+
+static int modern_discover(struct virtio_pci_dev *vdev)
+{
+    struct pci_dev *pdev = vdev->pci_dev;
+    struct pci_cfg_space *cfg = &pdev->cfg;
+
+    vdev->model = VIRTIO_PCI_MODERN_MODEL;
+    
+    switch (cfg->device_id) {
+    case 0x1040+16 :
+	DEBUG("GPU Device\n");
+	vdev->type = VIRTIO_PCI_GPU;
+	break;
+    default:
+	DEBUG("Unknown device\n");
+	vdev->type = VIRTIO_PCI_UNKNOWN;
+	return -1;
+    }
+
+    // scan capabiliities
+    pci_dev_scan_capabilities(pdev,modern_config_cap,vdev);
+
+
+    return 0;
+
+}
+
+static int legacy_discover(struct virtio_pci_dev *vdev)
+{
+    struct pci_dev *pdev = vdev->pci_dev;
+    struct pci_cfg_space *cfg = &pdev->cfg;
+    struct pci_bus *bus = pdev->bus;
+
+    vdev->model = VIRTIO_PCI_LEGACY_MODEL;
+    
+    switch (cfg->dev_cfg.subsys_id) { 
+    case 1:
+	DEBUG("Net Device\n");
+	vdev->type = VIRTIO_PCI_NET;
+	break;
+    case 2:
+	DEBUG("Block Device\n");
+	vdev->type = VIRTIO_PCI_BLOCK;
+	break;
+    case 3:
+	DEBUG("Console Device\n");
+	vdev->type = VIRTIO_PCI_CONSOLE;
+	break;
+    case 4:
+	DEBUG("Entropy Device\n");
+	vdev->type = VIRTIO_PCI_ENTROPY;
+	break;
+    case 5:
+	DEBUG("Balloon Device\n");
+	vdev->type = VIRTIO_PCI_BALLOON;
+	break;
+    case 6:
+	DEBUG("IOMemory Device\n");
+	vdev->type = VIRTIO_PCI_IOMEM;
+	break;
+    case 7:
+	DEBUG("rpmsg Device\n");
+	vdev->type = VIRTIO_PCI_RPMSG;
+	break;
+    case 8:
+	DEBUG("SCSI Host Device\n");
+	vdev->type = VIRTIO_PCI_SCSI_HOST;
+	break;
+    case 9:
+	DEBUG("9P Transport Device\n");
+	vdev->type = VIRTIO_PCI_9P;
+	break;
+    case 10:
+	DEBUG("WIFI Device\n");
+	vdev->type = VIRTIO_PCI_WIFI;
+	break;
+    case 11:
+	DEBUG("rproc serial Device\n");
+	vdev->type = VIRTIO_PCI_RPROC_SERIAL;
+	break;
+    case 12:
+	DEBUG("CAIF Device\n");
+	vdev->type = VIRTIO_PCI_CAIF;
+	break;
+    case 13:
+	DEBUG("Fancier Balloon Device\n");
+	vdev->type = VIRTIO_PCI_FANCIER_BALLOON;
+	break;
+    case 16:
+	DEBUG("GPU Device\n");
+	vdev->type = VIRTIO_PCI_GPU;
+	break;
+    case 17:
+	DEBUG("Timer Device\n");
+	vdev->type = VIRTIO_PCI_TIMER;
+	break;
+    case 18:
+	DEBUG("Input Device\n");
+	vdev->type = VIRTIO_PCI_INPUT;
+	break;
+    default:
+	DEBUG("Unknown Device (%d)\n",cfg->dev_cfg.subsys_id);
+	vdev->type = VIRTIO_PCI_UNKNOWN;
+	break;
+    }
+    
+    // we expect two bars exist, one for memory, one for i/o
+    // and these will be bar 0 and 1
+    // check to see if there are no others
+    int foundmem=0;
+    int foundio=0;
+    int i;
+    for (i=0;i<6;i=pci_dev_get_bar_next(pdev,i)) {
+	pci_bar_type_t type = pci_dev_get_bar_type(pdev,i);
+
+	if (type==PCI_BAR_NONE) {
+	    break;
+	}
+
+	uint64_t     addr = pci_dev_get_bar_addr(pdev,i);
+	uint64_t     size = pci_dev_get_bar_size(pdev,i);
+	
+	if (i>=2) { 
+	    DEBUG("Not expecting this to be a non-empty bar...\n");
+	}
+
+	if (type==PCI_BAR_IO) {
+	    vdev->ioport_start = addr;
+	    vdev->ioport_end = addr+size;
+	    foundio=1;
+	} else {
+	    vdev->mem_start = addr;
+	    vdev->mem_end = addr+size;
+	    foundmem=1;
+	}
+    }
+
+    if (foundio) {
+	vdev->method = IO;
+    } else if (foundmem) {
+	vdev->method = MEMORY;
+    } else {
+	vdev->method = NONE;
+	ERROR("Device has no register access method... Impossible...\n");
+	panic("Device has no register access method... Impossible...\n");
+	return -1;
+    }
+
+    return 0;
+    
+}
 
 int discover_devices(struct pci_info *pci)
 {
@@ -82,8 +362,9 @@ int discover_devices(struct pci_info *pci)
 
             if (cfg->vendor_id==0x1af4) {
                 DEBUG("Virtio Device Found\n");
-                struct virtio_pci_dev *vdev;
 
+                struct virtio_pci_dev *vdev;
+		
                 vdev = malloc(sizeof(struct virtio_pci_dev));
                 if (!vdev) {
                     ERROR("Cannot allocate device\n");
@@ -92,179 +373,47 @@ int discover_devices(struct pci_info *pci)
 
                 memset(vdev,0,sizeof(*vdev));
 
-                switch (cfg->dev_cfg.subsys_id) { 
-                case 1:
-                    DEBUG("Net Device\n");
-                    vdev->type = VIRTIO_PCI_NET;
-                    break;
-                case 2:
-                    DEBUG("Block Device\n");
-                    vdev->type = VIRTIO_PCI_BLOCK;
-                    break;
-                case 3:
-                    DEBUG("Console Device\n");
-                    vdev->type = VIRTIO_PCI_CONSOLE;
-                    break;
-                case 4:
-                    DEBUG("Entropy Device\n");
-                    vdev->type = VIRTIO_PCI_ENTROPY;
-                    break;
-                case 5:
-                    DEBUG("Balloon Device\n");
-                    vdev->type = VIRTIO_PCI_BALLOON;
-                    break;
-                case 6:
-                    DEBUG("IOMemory Device\n");
-                    vdev->type = VIRTIO_PCI_IOMEM;
-                    break;
-                case 7:
-                    DEBUG("rpmsg Device\n");
-                    vdev->type = VIRTIO_PCI_RPMSG;
-                    break;
-                case 8:
-                    DEBUG("SCSI Host Device\n");
-                    vdev->type = VIRTIO_PCI_SCSI_HOST;
-                    break;
-                case 9:
-                    DEBUG("9P Transport Device\n");
-                    vdev->type = VIRTIO_PCI_9P;
-                    break;
-                case 10:
-                    DEBUG("WIFI Device\n");
-                    vdev->type = VIRTIO_PCI_WIFI;
-                    break;
-                case 11:
-                    DEBUG("rproc serial Device\n");
-                    vdev->type = VIRTIO_PCI_RPROC_SERIAL;
-                    break;
-                case 12:
-                    DEBUG("CAIF Device\n");
-                    vdev->type = VIRTIO_PCI_CAIF;
-                    break;
-                case 13:
-                    DEBUG("Fancier Balloon Device\n");
-                    vdev->type = VIRTIO_PCI_FANCIER_BALLOON;
-                    break;
-                case 16:
-                    DEBUG("GPU Device\n");
-                    vdev->type = VIRTIO_PCI_GPU;
-                    break;
-                case 17:
-                    DEBUG("Timer Device\n");
-                    vdev->type = VIRTIO_PCI_TIMER;
-                    break;
-                case 18:
-                    DEBUG("Input Device\n");
-                    vdev->type = VIRTIO_PCI_INPUT;
-                    break;
-                default:
-                    DEBUG("Unknown Device\n");
-                    vdev->type = VIRTIO_PCI_UNKNOWN;
-                    break;
-                }
-
-                if (pdev->msix.type==PCI_MSI_X) {
-                    vdev->itype=VIRTIO_PCI_MSI_X;
-                } else {
-                    vdev->itype=VIRTIO_PCI_LEGACY;
-                    // PCI Interrupt (A..D)
-                    vdev->pci_intr = cfg->dev_cfg.intr_pin;
-                    // Figure out mapping here or look at capabilities for MSI-X
-                    // vdev->intr_vec = ...
-                }
-                    
-                // BAR handling will eventually be done by common code in PCI
-		    
-                // we expect two bars exist, one for memory, one for i/o
-                // and these will be bar 0 and 1
-                // check to see if there are no others
-                int foundmem=0;
-                int foundio=0;
-                for (int i=0;i<6;i++) { 
-                    uint32_t bar = pci_cfg_readl(bus->num,pdev->num, 0, 0x10 + i*4);
-                    uint32_t size;
-                    DEBUG("bar %d: 0x%0x\n",i, bar);
-                    if (i>=2 && bar!=0) { 
-                        DEBUG("Not expecting this to be a non-empty bar...\n");
-                    }
-                    if (!(bar & 0x0)) { 
-                        uint8_t mem_bar_type = (bar & 0x6) >> 1;
-                        if (mem_bar_type != 0) { 
-                            ERROR("Cannot handle memory bar type 0x%x\n", mem_bar_type);
-                            return -1;
-                        }
-                    }
-
-                    // determine size
-                    // write all 1s, get back the size mask
-                    pci_cfg_writel(bus->num,pdev->num,0,0x10 + i*4, 0xffffffff);
-                    // size mask comes back + info bits
-                    size = pci_cfg_readl(bus->num,pdev->num,0,0x10 + i*4);
-
-                    // mask all but size mask
-                    if (bar & 0x1) { 
-                        // I/O
-                        size &= 0xfffffffc;
-                    } else {
-                        // memory
-                        size &= 0xfffffff0;
-                    }
-                    size = ~size;
-                    size++; 
-
-                    // now we have to put back the original bar
-                    pci_cfg_writel(bus->num,pdev->num,0,0x10 + i*4, bar);
-
-                    if (!size) { 
-                        // non-existent bar, skip to next one
-                        continue;
-                    }
-
-                    if (size>0 && i>=2) { 
-                        ERROR("unexpected virtio pci bar with size>0!\n");
-                        return -1;
-                    }
-
-                    if (bar & 0x1) { 
-                        vdev->ioport_start = bar & 0xffffffc0;
-                        vdev->ioport_end = vdev->ioport_start + size;
-                        foundio=1;
-                    } else {
-                        vdev->mem_start = bar & 0xfffffff0;
-                        vdev->mem_end = vdev->mem_start + size;
-                        foundmem=1;
-                    }
-
-                }
-
-                // for now, privilege the IO port interface, since we want
-                // the legacy interface (4.1.4.8)
-                if (foundio) {
-                    vdev->method = IO;
-                } else if (foundmem) {
-                    vdev->method = MEMORY;
-                } else {
-                    vdev->method = NONE;
-                    ERROR("Device has no register access method... Impossible...\n");
-                    panic("Device has no register access method... Impossible...\n");
-                    return -1;
-                }
-
-                vdev->pci_dev = pdev;
-
+		vdev->pci_dev = pdev;
+		
+		if (is_legacy(vdev)) {
+		    DEBUG("Using legacy discovery\n");
+		    if (legacy_discover(vdev)) {
+			ERROR("Failed legacy discover\n");
+			return -1;
+		    }
+		} else {
+		    DEBUG("Using modern discovery\n");
+		    if (modern_discover(vdev)) {
+			ERROR("Failed modern discover\n");
+			return -1;
+		    }
+		}
+		
+		if (pdev->msix.type==PCI_MSI_X) {
+		    vdev->itype=VIRTIO_PCI_MSI_X_INTERRUPT;
+		} else {
+		    vdev->itype=VIRTIO_PCI_LEGACY_INTERRUPT;
+		    // PCI Interrupt (A..D)
+		    vdev->pci_intr = cfg->dev_cfg.intr_pin;
+		    // Figure out mapping here or look at capabilities for MSI-X
+		    // vdev->intr_vec = ...
+		}
+    
+		
                 INFO("Found virtio %s device: bus=%u dev=%u func=%u: pci_intr=%u intr_vec=%u ioport_start=%p ioport_end=%p mem_start=%p mem_end=%p access_method=%s\n",
                      vdev->type==VIRTIO_PCI_BLOCK ? "block" :
-                     vdev->type==VIRTIO_PCI_NET ? "net" : "other",
+                     vdev->type==VIRTIO_PCI_NET ? "net" :
+		     vdev->type==VIRTIO_PCI_GPU ? "gpu" : "other",
                      bus->num, pdev->num, 0,
                      vdev->pci_intr, vdev->intr_vec,
                      vdev->ioport_start, vdev->ioport_end,
                      vdev->mem_start, vdev->mem_end,
                      vdev->method==IO ? "IO" : vdev->method==MEMORY ? "MEMORY" : "NONE");
                  
-
+		
                 list_add(&vdev->virtio_node,&dev_list);
             }
-                
+	    
         }
     }
     
@@ -362,7 +511,7 @@ int virtio_pci_virtqueue_init(struct virtio_pci_dev *dev)
         // so it really represents a 44 bit address (32 bits * 4096)
         virtio_pci_write_regl(dev,QUEUE_ADDR,(uint32_t)(((uint64_t)(dev->virtq[i].aligned_data))/4096));
 
-	if (dev->itype==VIRTIO_PCI_MSI_X) {
+	if (dev->itype==VIRTIO_PCI_MSI_X_INTERRUPT) {
 	    // we still have the queue selected -
 	    // we map it to obvious table entry
 	    virtio_pci_write_regw(dev,QUEUE_VEC,i);
@@ -394,9 +543,9 @@ int virtio_pci_virtqueue_deinit(struct virtio_pci_dev *dev)
 
 int virtio_pci_ack_device(struct virtio_pci_dev *dev)
 {
-    virtio_pci_write_regb(dev,DEVICE_STATUS,0x0); // driver resets device
-    virtio_pci_write_regb(dev,DEVICE_STATUS,0b1); // driver acknowledges device
-    virtio_pci_write_regb(dev,DEVICE_STATUS,0b11); // driver can drive device
+    virtio_pci_write_regb(dev,DEVICE_STATUS,DEV_STATUS_RESET); 
+    virtio_pci_write_regb(dev,DEVICE_STATUS,DEV_STATUS_ACKNOWLEDGE); 
+    virtio_pci_write_regb(dev,DEVICE_STATUS,DEV_STATUS_ACKNOWLEDGE | DEV_STATUS_DRIVER);
 
     return 0;
 }
@@ -411,14 +560,31 @@ int virtio_pci_read_features(struct virtio_pci_dev *dev)
 int virtio_pci_write_features(struct virtio_pci_dev *dev, uint32_t features)
 {
     virtio_pci_write_regl(dev,DRIVER_FEATURES,features);
-    dev->feat_accepted = features;
 
+    uint8_t r;
+
+    // this should happen only for non-legacy devices
+    r = virtio_pci_read_regb(dev,DEVICE_STATUS);
+    r |= DEV_STATUS_FEATURES_OK;
+    virtio_pci_write_regb(dev,DEVICE_STATUS,r);
+
+    // now check
+    r = virtio_pci_read_regb(dev,DEVICE_STATUS);
+    if (!(r & DEV_STATUS_FEATURES_OK)) {
+	ERROR("device rejects our choice of features\n");
+	return -1;
+    }
+    
     return 0;
 }
 
 int virtio_pci_start_device(struct virtio_pci_dev *dev)
 {
-    virtio_pci_write_regb(dev,DEVICE_STATUS,0b111);
+    uint8_t r = virtio_pci_read_regb(dev,DEVICE_STATUS);
+
+    r |= DEV_STATUS_DRIVER_OK;
+    
+    virtio_pci_write_regb(dev,DEVICE_STATUS,r);
 
     return 0;
 }
@@ -556,7 +722,7 @@ static int bringup_device(struct virtio_pci_dev *dev)
 {
     DEBUG("Bringing up device %u:%u.%u\n",dev->pci_dev->bus->num,dev->pci_dev->num,dev->pci_dev->fun);
     // switch on MSI-X here because it will change device layout
-    if (dev->itype==VIRTIO_PCI_MSI_X) {
+    if (dev->itype==VIRTIO_PCI_MSI_X_INTERRUPT) {
 	if (pci_dev_enable_msi_x(dev->pci_dev)) {
 	    ERROR("Failed to enable MSI-X on device...\n");
 	    return -1;
@@ -571,6 +737,11 @@ static int bringup_device(struct virtio_pci_dev *dev)
 #ifdef NAUT_CONFIG_VIRTIO_BLK
     case VIRTIO_PCI_BLOCK:
 	return virtio_blk_init(dev);
+	break;
+#endif
+#ifdef NAUT_CONFIG_VIRTIO_GPU
+    case VIRTIO_PCI_GPU:
+	return virtio_gpu_init(dev);
 	break;
 #endif
     default:

@@ -350,7 +350,7 @@ static int handler(excp_entry_t *exp, excp_vec_t vec, void *priv_data)
     struct virtio_blk_dev *dev = (struct virtio_blk_dev *) priv_data;
     
     // only for legacy style interrupt
-    if (dev->virtio_dev->itype == VIRTIO_PCI_LEGACY) {
+    if (dev->virtio_dev->itype == VIRTIO_PCI_LEGACY_INTERRUPT) {
         DEBUG("using legacy style interrupt\n");
         // read the interrupt status register, which will reset it to zero
         uint8_t isr = virtio_pci_read_regb(dev->virtio_dev, ISR_STATUS);
@@ -632,7 +632,7 @@ int virtio_blk_init(struct virtio_pci_dev *dev)
     uint8_t i;
     ulong_t vec;
     
-    if (dev->itype==VIRTIO_PCI_MSI_X) {
+    if (dev->itype==VIRTIO_PCI_MSI_X_INTERRUPT) {
 	// we assume MSI-X has been enabled on the device
 	// already, that virtqueue setup is done, and
 	// that queue i has been mapped to MSI-X table entry i
