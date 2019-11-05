@@ -73,6 +73,10 @@ static struct list_head dev_list;
 #define DEV_STATUS_FAILED             128
 
 
+// FIX FIX
+// PAD these should be using atomic write/read
+//
+
 uint32_t virtio_pci_read_regl(struct virtio_pci_dev *dev, uint32_t offset)
 {
     uint32_t result;
@@ -82,9 +86,7 @@ uint32_t virtio_pci_read_regl(struct virtio_pci_dev *dev, uint32_t offset)
     }
     if (dev->method==MEMORY) {
         uint64_t addr = dev->mem_start + offset;
-        //__asm__ __volatile__ ("movl (%1), %0" : "=r"(result) : "r"(addr) : "memory");
-	result = *(uint32_t *)addr;
-	printk("lread of offset %lx (target %lx) returns %x\n",offset,addr,result);
+        __asm__ __volatile__ ("movl (%1), %0" : "=r"(result) : "r"(addr) : "memory");
     } else {
         result = inl(dev->ioport_start+offset);
     }
@@ -100,9 +102,7 @@ uint16_t virtio_pci_read_regw(struct virtio_pci_dev *dev, uint32_t offset)
     }
     if (dev->method==MEMORY) {
         uint64_t addr = dev->mem_start + offset;
-	result = *(uint16_t *)addr;
-        //__asm__ __volatile__ ("movw (%1), %0" : "=r"(result) : "r"(addr) : "memory");
-	printk("wread of offset %lx (target %lx) returns %x\n",offset,addr,result);
+        __asm__ __volatile__ ("movw (%1), %0" : "=r"(result) : "r"(addr) : "memory");
     } else {
         result = inw(dev->ioport_start+offset);
     }
@@ -118,9 +118,7 @@ uint8_t virtio_pci_read_regb(struct virtio_pci_dev *dev, uint32_t offset)
     }
     if (dev->method==MEMORY) {
         uint64_t addr = dev->mem_start + offset;
-	result = *(uint8_t *)addr;
-        //__asm__ __volatile__ ("movb (%1), %0" : "=r"(result) : "r"(addr) : "memory");
-	printk("bread of offset %lx (target %lx) returns %x\n",offset,addr,result);
+        __asm__ __volatile__ ("movb (%1), %0" : "=r"(result) : "r"(addr) : "memory");
     } else {
         result = inb(dev->ioport_start+offset);
     }
@@ -135,9 +133,7 @@ void virtio_pci_write_regl(struct virtio_pci_dev *dev, uint32_t offset, uint32_t
     }
     if (dev->method==MEMORY) { 
         uint64_t addr = dev->mem_start + offset;
-        // maybe the same bug as in the hda code? __asm__ __volatile__ ("movl %1, (%0)" : "=r"(addr): "r"(data) : "memory");
-	*(uint32_t *)addr = data;
-	DEBUG("lwrite of offset %lx (target %lx) with %x\n",offset,addr,data);
+	__asm__ __volatile__ ("movl %1, (%0)" : "=r"(addr): "r"(data) : "memory");
     } else {
         outl(data,dev->ioport_start+offset);
     }
@@ -151,9 +147,7 @@ void virtio_pci_write_regw(struct virtio_pci_dev *dev, uint32_t offset, uint16_t
     }
     if (dev->method==MEMORY) { 
         uint64_t addr = dev->mem_start + offset;
-	//        __asm__ __volatile__ ("movw %1, (%0)" : "=r"(addr): "r"(data) : "memory");
-	*(uint16_t *)addr = data;	
-	printk("wwrite of offset %lx (target %lx) with %x\n",offset,addr,data);
+	__asm__ __volatile__ ("movw %1, (%0)" : "=r"(addr): "r"(data) : "memory");
     } else {
         outw(data,dev->ioport_start+offset);
     }
@@ -167,9 +161,7 @@ void virtio_pci_write_regb(struct virtio_pci_dev *dev, uint32_t offset, uint8_t 
     }
     if (dev->method==MEMORY) { 
         uint64_t addr = dev->mem_start + offset;
-	*(uint8_t *)addr = data;	
-	printk("bwrite of offset %lx (target %lx) with %x\n",offset,addr,data);
-        // __asm__ __volatile__ ("movb %1, (%0)" : "=r"(addr): "r"(data) : "memory");
+        __asm__ __volatile__ ("movb %1, (%0)" : "=r"(addr): "r"(data) : "memory");
     } else {
         outb(data,dev->ioport_start+offset);
     }
