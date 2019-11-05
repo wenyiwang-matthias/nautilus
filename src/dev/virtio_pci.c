@@ -73,6 +73,110 @@ static struct list_head dev_list;
 #define DEV_STATUS_FAILED             128
 
 
+uint32_t virtio_pci_read_regl(struct virtio_pci_dev *dev, uint32_t offset)
+{
+    uint32_t result;
+    if (dev->model!=VIRTIO_PCI_LEGACY_MODEL) {
+	ERROR("supported only for legacy model\n");
+	return -1;
+    }
+    if (dev->method==MEMORY) {
+        uint64_t addr = dev->mem_start + offset;
+        //__asm__ __volatile__ ("movl (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+	result = *(uint32_t *)addr;
+	printk("lread of offset %lx (target %lx) returns %x\n",offset,addr,result);
+    } else {
+        result = inl(dev->ioport_start+offset);
+    }
+    return result;
+}
+
+uint16_t virtio_pci_read_regw(struct virtio_pci_dev *dev, uint32_t offset)
+{
+    uint16_t result;
+    if (dev->model!=VIRTIO_PCI_LEGACY_MODEL) {
+	ERROR("supported only for legacy model\n");
+	return -1;
+    }
+    if (dev->method==MEMORY) {
+        uint64_t addr = dev->mem_start + offset;
+	result = *(uint16_t *)addr;
+        //__asm__ __volatile__ ("movw (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+	printk("wread of offset %lx (target %lx) returns %x\n",offset,addr,result);
+    } else {
+        result = inw(dev->ioport_start+offset);
+    }
+    return result;
+}
+
+uint8_t virtio_pci_read_regb(struct virtio_pci_dev *dev, uint32_t offset)
+{
+    uint8_t result;
+    if (dev->model!=VIRTIO_PCI_LEGACY_MODEL) {
+	ERROR("supported only for legacy model\n");
+	return -1;
+    }
+    if (dev->method==MEMORY) {
+        uint64_t addr = dev->mem_start + offset;
+	result = *(uint8_t *)addr;
+        //__asm__ __volatile__ ("movb (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+	printk("bread of offset %lx (target %lx) returns %x\n",offset,addr,result);
+    } else {
+        result = inb(dev->ioport_start+offset);
+    }
+    return result;
+}
+
+void virtio_pci_write_regl(struct virtio_pci_dev *dev, uint32_t offset, uint32_t data)
+{
+    if (dev->model!=VIRTIO_PCI_LEGACY_MODEL) {
+	ERROR("supported only for legacy model\n");
+	return;
+    }
+    if (dev->method==MEMORY) { 
+        uint64_t addr = dev->mem_start + offset;
+        // maybe the same bug as in the hda code? __asm__ __volatile__ ("movl %1, (%0)" : "=r"(addr): "r"(data) : "memory");
+	*(uint32_t *)addr = data;
+	DEBUG("lwrite of offset %lx (target %lx) with %x\n",offset,addr,data);
+    } else {
+        outl(data,dev->ioport_start+offset);
+    }
+}
+
+void virtio_pci_write_regw(struct virtio_pci_dev *dev, uint32_t offset, uint16_t data)
+{
+    if (dev->model!=VIRTIO_PCI_LEGACY_MODEL) {
+	ERROR("supported only for legacy model\n");
+	return;
+    }
+    if (dev->method==MEMORY) { 
+        uint64_t addr = dev->mem_start + offset;
+	//        __asm__ __volatile__ ("movw %1, (%0)" : "=r"(addr): "r"(data) : "memory");
+	*(uint16_t *)addr = data;	
+	printk("wwrite of offset %lx (target %lx) with %x\n",offset,addr,data);
+    } else {
+        outw(data,dev->ioport_start+offset);
+    }
+}
+
+void virtio_pci_write_regb(struct virtio_pci_dev *dev, uint32_t offset, uint8_t data)
+{
+    if (dev->model!=VIRTIO_PCI_LEGACY_MODEL) {
+	ERROR("supported only for legacy model\n");
+	return;
+    }
+    if (dev->method==MEMORY) { 
+        uint64_t addr = dev->mem_start + offset;
+	*(uint8_t *)addr = data;	
+	printk("bwrite of offset %lx (target %lx) with %x\n",offset,addr,data);
+        // __asm__ __volatile__ ("movb %1, (%0)" : "=r"(addr): "r"(data) : "memory");
+    } else {
+        outb(data,dev->ioport_start+offset);
+    }
+}
+
+
+
 struct virtio_pci_cap {
     u8 cap_vndr;    /* Generic PCI field: PCI_CAP_ID_VNDR */
     u8 cap_next;    /* Generic PCI field: next ptr. */
@@ -95,14 +199,13 @@ struct virtio_pci_cap {
 /* PCI configuration access */
 #define VIRTIO_PCI_CAP_PCI_CFG           5
 
-// Need virtio_pci_common_cfg here
+// for notify cap
+struct virtio_pci_notify_cap { 
+    struct virtio_pci_cap cap; 
+    le32 notify_off_multiplier; /* Multiplier for queue_notify_off. */ 
+};
 
-// Probably best to factor this into a virtio_pci_legacy.c and
-// virtio_pci.c...
-//
-//
-// Alternatively - why is there not a transitional/legacy
-// interface for virtio-gpu? 
+
 
 
 static int is_legacy(struct virtio_pci_dev *vdev)
@@ -133,55 +236,45 @@ static void modern_config_cap(void *state, void *data)
 
 	switch (cap->cfg_type) {
 	case VIRTIO_PCI_CAP_COMMON_CFG: {
-	    uint64_t len;
-	    // set up our basic config
 	    DEBUG("common config - bar=%d, baroffset=0x%x, len=0x%x\n",
 		  cap->bar, cap->offset, cap->length);
-
-	    switch (pci_dev_get_bar_type(pdev,cap->bar)) {
-	    case PCI_BAR_IO:
-		vdev->ioport_start = pci_dev_get_bar_addr(pdev,cap->bar) + cap->offset;
-		len = pci_dev_get_bar_size(pdev,cap->bar);
-		DEBUG("bar length is 0x%lx\n",len);
-		vdev->ioport_end = vdev->ioport_start + cap->length;
-		vdev->method = IO;
-		break;
-	    case PCI_BAR_MEM:
-		vdev->mem_start = pci_dev_get_bar_addr(pdev,cap->bar) + cap->offset;
-		len = pci_dev_get_bar_size(pdev,cap->bar);
-		DEBUG("bar length is 0x%lx\n",len);
-		vdev->mem_end = vdev->mem_start + cap->length;
-		vdev->method = MEMORY;
-		break;
-	    default:
-		ERROR("Unknown access method - huh?\n");
-		vdev->method = NONE;
-		break;
-	    }
+	    vdev->common = (struct virtio_pci_common_cfg*)(pci_dev_get_bar_addr(pdev,cap->bar) + cap->offset);
+	    DEBUG("common register block is at %p\n",vdev->common);
 	}
 	    break;
 	case VIRTIO_PCI_CAP_NOTIFY_CFG: {
-	    DEBUG("notify config - skipped\n");
+	    struct virtio_pci_notify_cap * ncap = (struct virtio_pci_notify_cap *)cap;
+	    vdev->notify_off_multiplier = ncap->notify_off_multiplier;
+	    DEBUG("notify config: multiplier set to %u\n",vdev->notify_off_multiplier);
 	}
 	    break;
 	case VIRTIO_PCI_CAP_ISR_CFG:  {
-	    DEBUG("isr config - skipped\n");
+	    DEBUG("isr config - skipped since we will use MSI-X\n");
 	}
 	    break;
 	case VIRTIO_PCI_CAP_DEVICE_CFG: {
-	    DEBUG("device-specific config - skipped\n");
+	    DEBUG("device-specific config - bar=%d, baroffset=0x%x, len=0x%x\n",
+		  cap->bar, cap->offset, cap->length);
+	    vdev->device_specific = (uint8_t *)(pci_dev_get_bar_addr(pdev,cap->bar) + cap->offset);
+	    DEBUG("device-specific data %p 8 bytes: %x %x %x %x %x %x %x %x\n",vdev->device_specific,
+		  vdev->device_specific[0],
+		  vdev->device_specific[1],
+		  vdev->device_specific[2],
+		  vdev->device_specific[3],
+		  vdev->device_specific[4],
+		  vdev->device_specific[5],
+		  vdev->device_specific[6],
+		  vdev->device_specific[7]);
 	}
 	    break;
 	case VIRTIO_PCI_CAP_PCI_CFG: {
-	    DEBUG("pci config - skipped\n");
+	    DEBUG("pci config - skipped - we are using normal PCI config\n");
 	}
 	    break;
 	default:
 	    ERROR("unknown config type %d skipped\n", cap->cfg_type);
 	    break;
 	}
-	    
-	    
     }
 }
 
@@ -399,17 +492,27 @@ int discover_devices(struct pci_info *pci)
 		    // vdev->intr_vec = ...
 		}
     
-		
-                INFO("Found virtio %s device: bus=%u dev=%u func=%u: pci_intr=%u intr_vec=%u ioport_start=%p ioport_end=%p mem_start=%p mem_end=%p access_method=%s\n",
-                     vdev->type==VIRTIO_PCI_BLOCK ? "block" :
-                     vdev->type==VIRTIO_PCI_NET ? "net" :
-		     vdev->type==VIRTIO_PCI_GPU ? "gpu" : "other",
-                     bus->num, pdev->num, 0,
-                     vdev->pci_intr, vdev->intr_vec,
-                     vdev->ioport_start, vdev->ioport_end,
-                     vdev->mem_start, vdev->mem_end,
-                     vdev->method==IO ? "IO" : vdev->method==MEMORY ? "MEMORY" : "NONE");
-                 
+ 		if (vdev->model==VIRTIO_PCI_LEGACY_MODEL) {
+		    INFO("Found legacy virtio %s device: bus=%u dev=%u func=%u: pci_intr=%u intr_vec=%u ioport_start=%p ioport_end=%p mem_start=%p mem_end=%p access_method=%s\n",
+			 vdev->type==VIRTIO_PCI_BLOCK ? "block" :
+			 vdev->type==VIRTIO_PCI_NET ? "net" :
+			 vdev->type==VIRTIO_PCI_GPU ? "gpu" : "other",
+			 bus->num, pdev->num, 0,
+			 vdev->pci_intr, vdev->intr_vec,
+			 vdev->ioport_start, vdev->ioport_end,
+			 vdev->mem_start, vdev->mem_end,
+			 vdev->method==IO ? "IO" : vdev->method==MEMORY ? "MEMORY" : "NONE");
+		}
+
+ 		if (vdev->model==VIRTIO_PCI_MODERN_MODEL) {
+		    INFO("Found modern virtio %s device: bus=%u dev=%u func=%u: common=%p dev_spec=%p notif_mult=%u\n",
+			 vdev->type==VIRTIO_PCI_BLOCK ? "block" :
+			 vdev->type==VIRTIO_PCI_NET ? "net" :
+			 vdev->type==VIRTIO_PCI_GPU ? "gpu" : "other",
+			 bus->num, pdev->num, 0,
+			 vdev->common, vdev->device_specific, vdev->notify_off_multiplier);
+		}
+		    
 		
                 list_add(&vdev->virtio_node,&dev_list);
             }
@@ -424,7 +527,6 @@ int discover_devices(struct pci_info *pci)
 
 #define NUM_PAGES(x) ((x)/4096 + !!((x)%4096))
 
-
 static inline unsigned compute_size(unsigned int qsz) 
 { 
     return ALIGN(sizeof(struct virtq_desc)*qsz + sizeof(uint16_t)*(3 + qsz)) 
@@ -433,8 +535,7 @@ static inline unsigned compute_size(unsigned int qsz)
 
 
 
-// this is all based on the legacy interface
-int virtio_pci_virtqueue_init(struct virtio_pci_dev *dev)
+static int virtqueue_init_legacy(struct virtio_pci_dev *dev)
 {
 
     uint16_t i,j;
@@ -443,7 +544,7 @@ int virtio_pci_virtqueue_init(struct virtio_pci_dev *dev)
     uint64_t alloc_size;
 
 
-    DEBUG("Virtqueue init of %u:%u.%u\n",dev->pci_dev->bus->num,dev->pci_dev->num,dev->pci_dev->fun);
+    DEBUG("Virtqueue legacy init of %u:%u.%u\n",dev->pci_dev->bus->num,dev->pci_dev->num,dev->pci_dev->fun);
 
     // now let's figure out the sizes
 
@@ -529,7 +630,109 @@ int virtio_pci_virtqueue_init(struct virtio_pci_dev *dev)
 
 }
 
-int virtio_pci_virtqueue_deinit(struct virtio_pci_dev *dev)
+static int virtqueue_init_modern(struct virtio_pci_dev *dev)
+{
+    uint16_t num;
+    uint16_t i,j;
+    uint64_t qsz;
+    uint64_t qsz_numbytes;
+    uint64_t alloc_size;
+
+
+    DEBUG("Virtqueue modern init of %u:%u.%u\n",dev->pci_dev->bus->num,dev->pci_dev->num,dev->pci_dev->fun);
+    num = virtio_pci_atomic_load(&dev->common->num_queues);
+
+    DEBUG("device has %u virtqueues\n",num);
+
+    // now let's figure out the sizes
+
+    dev->num_virtqs = 0;
+
+    for (i=0;i<num;i++) {
+	
+	virtio_pci_atomic_store(&dev->common->queue_select,i);
+	qsz = virtio_pci_atomic_load(&dev->common->queue_size);
+
+        if (qsz==0) {
+            // out of queues to support
+            break;
+        }
+
+        DEBUG("Virtqueue %u has 0x%lx slots\n", i, qsz);
+
+        qsz_numbytes = compute_size(qsz);
+
+        DEBUG("Virtqueue %u has size 0x%lx bytes\n", i, qsz_numbytes);
+
+        dev->virtq[i].size_bytes = qsz_numbytes;
+        alloc_size = 4096 * (NUM_PAGES(qsz_numbytes) + 1);
+
+        if (!(dev->virtq[i].data = malloc(alloc_size))) {
+            ERROR("Cannot allocate ring\n");
+            return -1;
+        }
+
+        memset(dev->virtq[i].data,0,alloc_size);
+
+        dev->virtq[i].aligned_data = (uint8_t *)ALIGN((uint64_t)(dev->virtq[i].data));
+
+        // init the standardized virtqueue structure's pointers
+        dev->virtq[i].vq.qsz = qsz;
+        dev->virtq[i].vq.desc = (struct virtq_desc *) (dev->virtq[i].aligned_data);
+        dev->virtq[i].vq.avail = (struct virtq_avail *) 
+            (dev->virtq[i].aligned_data 
+                + sizeof(struct virtq_desc)*qsz);
+        dev->virtq[i].vq.used = (struct virtq_used *) 
+            (dev->virtq[i].aligned_data
+                +  ALIGN(sizeof(struct virtq_desc)*qsz + sizeof(uint16_t)*(3 + qsz)));
+
+        // init free list
+        // desc j points to desc j+1
+	// a value >=qsz indicates null
+        dev->virtq[i].nfree = qsz;
+        dev->virtq[i].head = 0;
+        for (j = 0; j < qsz-1; j++) {
+            dev->virtq[i].vq.desc[j].next = j+1;
+        }
+        spinlock_init(&dev->virtq[i].lock);
+
+        // init last seen used
+        dev->virtq[i].last_seen_used = 0;
+
+        DEBUG("virtq allocation at %p for 0x%lx bytes\n", dev->virtq[i].data,alloc_size);
+        DEBUG("virtq data at %p\n", dev->virtq[i].aligned_data);
+        DEBUG("virtq qsz  = 0x%lx\n",dev->virtq[i].vq.qsz);
+        DEBUG("virtq desc at %p\n", dev->virtq[i].vq.desc);
+        DEBUG("virtq avail at %p\n", dev->virtq[i].vq.avail);
+        DEBUG("virtq used at %p\n", dev->virtq[i].vq.used);
+
+	// tell the device where our virtqueue is
+	virtio_pci_atomic_store(&dev->common->queue_desc, dev->virtq[i].vq.desc);
+	virtio_pci_atomic_store(&dev->common->queue_driver, dev->virtq[i].vq.avail);
+	virtio_pci_atomic_store(&dev->common->queue_device, dev->virtq[i].vq.used);
+				
+
+	if (dev->itype==VIRTIO_PCI_MSI_X_INTERRUPT) {
+	    // we still have the queue selected -
+	    // we map it to obvious table entry
+	    // IS THIS RIGHT?
+	    virtio_pci_atomic_store(&dev->common->queue_msix_vector,i);
+	}
+
+        dev->num_virtqs++;
+  }
+  
+  if (i==MAX_VIRTQS) { 
+      ERROR("Device needs too many virtqueues!\n");
+      return -1;
+  }
+  
+  return 0;
+
+}
+
+
+static int virtqueue_deinit_legacy(struct virtio_pci_dev *dev)
 {
     uint16_t i;
 
@@ -541,7 +744,13 @@ int virtio_pci_virtqueue_deinit(struct virtio_pci_dev *dev)
 }
 
 
-int virtio_pci_ack_device(struct virtio_pci_dev *dev)
+static int virtqueue_deinit_modern(struct virtio_pci_dev *dev)
+{
+    ERROR("unimplemented\n");
+    return -1;
+}
+
+static int ack_device_legacy(struct virtio_pci_dev *dev)
 {
     virtio_pci_write_regb(dev,DEVICE_STATUS,DEV_STATUS_RESET); 
     virtio_pci_write_regb(dev,DEVICE_STATUS,DEV_STATUS_ACKNOWLEDGE); 
@@ -550,35 +759,77 @@ int virtio_pci_ack_device(struct virtio_pci_dev *dev)
     return 0;
 }
 
-int virtio_pci_read_features(struct virtio_pci_dev *dev)
+static int ack_device_modern(struct virtio_pci_dev *dev)
 {
-    dev->feat_offered = virtio_pci_read_regl(dev,DEVICE_FEATURES);
-
-    return 0;    
-}
-
-int virtio_pci_write_features(struct virtio_pci_dev *dev, uint32_t features)
-{
-    virtio_pci_write_regl(dev,DRIVER_FEATURES,features);
-
-    uint8_t r;
-
-    // this should happen only for non-legacy devices
-    r = virtio_pci_read_regb(dev,DEVICE_STATUS);
-    r |= DEV_STATUS_FEATURES_OK;
-    virtio_pci_write_regb(dev,DEVICE_STATUS,r);
-
-    // now check
-    r = virtio_pci_read_regb(dev,DEVICE_STATUS);
-    if (!(r & DEV_STATUS_FEATURES_OK)) {
-	ERROR("device rejects our choice of features\n");
-	return -1;
-    }
+    virtio_pci_atomic_store(&dev->common->device_status,DEV_STATUS_RESET);
+    virtio_pci_atomic_store(&dev->common->device_status,DEV_STATUS_ACKNOWLEDGE);
+    virtio_pci_atomic_store(&dev->common->device_status,DEV_STATUS_ACKNOWLEDGE | DEV_STATUS_DRIVER);
     
     return 0;
 }
 
-int virtio_pci_start_device(struct virtio_pci_dev *dev)
+static int read_features_legacy(struct virtio_pci_dev *dev)
+{
+    dev->feat_offered = virtio_pci_read_regl(dev,DEVICE_FEATURES);
+    
+    return 0;    
+}
+
+static int read_features_modern(struct virtio_pci_dev *dev)
+{
+    // get MSB
+    virtio_pci_atomic_store(&dev->common->device_feature_select,1);
+    dev->feat_offered = virtio_pci_atomic_load(&dev->common->device_feature);
+    dev->feat_offered <<= 32;
+    // add LSB
+    virtio_pci_atomic_store(&dev->common->device_feature_select,0);
+    dev->feat_offered |= virtio_pci_atomic_load(&dev->common->device_feature);
+    
+    return 0;
+}
+
+static int write_features_legacy(struct virtio_pci_dev *dev, uint32_t features)
+{
+    virtio_pci_write_regl(dev,DRIVER_FEATURES,features);
+    dev->feat_accepted = features;
+
+    return 0;
+}
+
+static int write_features_modern(struct virtio_pci_dev *dev, uint64_t features)
+{
+    uint32_t temp;
+    // set MSB
+    temp = features>>32;
+    virtio_pci_atomic_store(&dev->common->driver_feature_select,1);
+    virtio_pci_atomic_store(&dev->common->driver_feature,temp);
+    // set LSB
+    temp = features;
+    virtio_pci_atomic_store(&dev->common->driver_feature_select,0);
+    virtio_pci_atomic_store(&dev->common->driver_feature,temp);
+
+    // now indicate we are done
+    uint8_t ds  = virtio_pci_atomic_load(&dev->common->device_status);
+    ds |= DEV_STATUS_FEATURES_OK;
+    virtio_pci_atomic_store(&dev->common->device_status,ds);
+
+    // now reread to see if it bought it
+    ds  = virtio_pci_atomic_load(&dev->common->device_status);
+
+    if (ds & DEV_STATUS_FEATURES_OK) {
+	// features accepted
+	dev->feat_accepted = features;
+	DEBUG("negotiated features accepted by device \n");
+	return 0;
+    } else {
+	ERROR("negotiated features not accepted by device\n");
+	return -1;
+    }
+}
+
+
+
+static int start_device_legacy(struct virtio_pci_dev *dev)
 {
     uint8_t r = virtio_pci_read_regb(dev,DEVICE_STATUS);
 
@@ -588,6 +839,61 @@ int virtio_pci_start_device(struct virtio_pci_dev *dev)
 
     return 0;
 }
+
+static int start_device_modern(struct virtio_pci_dev *dev)
+{
+    ERROR("unimplemented\n");
+    return -1;
+}
+
+
+
+#define DISPATCH_RET(dev,func,args...)		\
+    switch ((dev)->model) {			\
+    case VIRTIO_PCI_LEGACY_MODEL:		\
+        return func##_legacy(dev, ##args);	\
+	break;					\
+    case VIRTIO_PCI_MODERN_MODEL:		\
+        return func##_modern(dev, ##args);	\
+	break;					\
+    default:					\
+        ERROR("unsupported model\n");		\
+        return -1;                              \
+    }                                           \
+
+
+int virtio_pci_virtqueue_init(struct virtio_pci_dev *dev)
+{
+    DISPATCH_RET(dev,virtqueue_init);
+}
+
+int virtio_pci_virtqueue_deinit(struct virtio_pci_dev *dev)
+{
+    DISPATCH_RET(dev,virtqueue_deinit);
+}
+
+int virtio_pci_ack_device(struct virtio_pci_dev *dev)
+{
+    DISPATCH_RET(dev,ack_device);
+}
+
+
+int virtio_pci_start_device(struct virtio_pci_dev *dev)
+{
+    DISPATCH_RET(dev,start_device);
+}	
+     
+int virtio_pci_read_features(struct virtio_pci_dev *dev)
+{
+    DISPATCH_RET(dev,read_features);
+}
+
+int virtio_pci_write_features(struct virtio_pci_dev *dev, uint64_t features)
+{
+    DISPATCH_RET(dev,write_features,features);
+}
+
+
 
 int virtio_pci_desc_chain_alloc(struct virtio_pci_dev *dev, uint16_t qidx, uint16_t *desc_idx, uint16_t count)
 {

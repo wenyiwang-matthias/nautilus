@@ -60,8 +60,8 @@
 #define VIRTIO_NET_CTRLQ_IDX  2
 
 // legacy register offsets
-#define VIRTIO_NET_OFF_MAC(v)     (virtio_pci_device_regs_start(v) + 0)
-#define VIRTIO_NET_OFF_STATUS(v)  (virtio_pci_device_regs_start(v) + 6)
+#define VIRTIO_NET_OFF_MAC(v)     (virtio_pci_device_regs_start_legacy(v) + 0)
+#define VIRTIO_NET_OFF_STATUS(v)  (virtio_pci_device_regs_start_legacy(v) + 6)
 
 // feature bits
 
@@ -393,9 +393,9 @@ void teardown(struct virtio_pci_dev *dev)
     virtio_pci_virtqueue_deinit(dev);
 }
 
-static int select_features(uint32_t features)
+static uint64_t select_features(uint64_t features)
 {
-    DEBUG("device features: 0x%0x\n",features);
+    DEBUG("device features: 0x%0lx\n",features);
     DEBUG_FBIT(features, VIRTIO_NET_F_CSUM);
     DEBUG_FBIT(features, VIRTIO_NET_F_GUEST_CSUM);
     DEBUG_FBIT(features, VIRTIO_NET_F_CTRL_GUEST_OFFLOADS);
@@ -424,11 +424,11 @@ static int select_features(uint32_t features)
     //DEBUG_FBIT(features, VIRTIO_F_VERSION_1);
 
     // choose accepted features
-    uint32_t accepted = 0;
+    uint64_t accepted = 0;
 
     FBIT_SETIF(accepted,features,VIRTIO_NET_F_MAC);
 
-    DEBUG("features accepted: 0x%0x\n", accepted);
+    DEBUG("features accepted: 0x%0lx\n", accepted);
 
     return accepted;
 }
@@ -547,6 +547,11 @@ int virtio_net_init(struct virtio_pci_dev *dev)
 {
     char buf[DEV_NAME_LEN];
 
+    if (!dev->model==VIRTIO_PCI_LEGACY_MODEL) {
+	ERROR("currently only supported with legacy model\n");
+	return -1;
+    }
+    
     DEBUG("init device\n");
 
     // allocate memory for state

@@ -10,34 +10,125 @@
  * http://www.v3vee.org  and
  * http://xstack.sandia.gov/hobbes
  *
- * Copyright (c) 2018  Gino Wang
- * Copyright (c) 2018  Jin Han 
- * Copyright (c) 2018, The V3VEE Project  <http://www.v3vee.org>
+ * Copyright (c) 2019  Peter Dinda
+ * Copyright (c) 2019, The Intereaving Project <http://www.interweaving.org>
  *                     The Hobbes Project <http://xstack.sandia.gov/hobbes>
  * All rights reserved.
  *
- * Authors: Gino Wang <sihengwang2019@u.northwestern.edu>
- *          Jin Han <jinhan2019@u.northwestern.edu>
+ * Authors: Peter Dinda <pdinda@northwestern.edu>
  *
  * This is free software.  You are permitted to use,
  * redistribute, and modify it as specified in the file "LICENSE.txt".
  */
 
 #include <nautilus/nautilus.h>
-#include <nautilus/blkdev.h>
+// eventually gpudev.h - for now we are a generic device
+#include <nautilus/dev.h>
+//#include <nautilus/blkdev.h>
+
+
+
+/*
+
+  -vga virtio has following strangeness on qemu:
+
+
+(Block device)
+
+root-shell> pci dev 0 5 0
+vendor_id               : 0x1af4
+device_id               : 0x1001 <= transitional or legacy device
+cmd                     : 0x107
+status                  : 0x10
+rev_id                  : 0x0   <= transitional device
+prog_if                 : 0x0
+subclass                : 0x0 (UNKNOWN)
+class_code              : 0x1 (storage)
+cl_size                 : 0x0
+lat_timer               : 0x0
+hdr_type                : 0x0 (device)
+bist                    : 0x0
+bars[0]                 : 0xc041
+bars[1]                 : 0xfebf2000
+bars[2]                 : 0x0
+bars[3]                 : 0x0
+bars[4]                 : 0x0
+bars[5]                 : 0x0
+cardbus_cis_ptr         : 0x0
+subsys_vendor_id        : 0x1af4
+subsys_id               : 0x2
+exp_rom_bar             : 0x0
+cap_ptr                 : 0x40
+rsvd[0]                 : 0x0
+rsvd[1]                 : 0x0
+rsvd[2]                 : 0x0
+rsvd[3]                 : 0x0
+rsvd[4]                 : 0x0
+rsvd[5]                 : 0x0
+rsvd[6]                 : 0x0
+intr_line               : 0xa
+intr_pin                : 0x1
+min_grant               : 0x0
+max_latency             : 0x0
+data                    : 0x110001000100000001080000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+capabilities            : 0x11 (MSI-X) 
+
+(gpu device)
+
+root-shell> pci dev 0 2 0
+vendor_id               : 0x1af4
+device_id               : 0x1050 <= 0x1040+id model
+cmd                     : 0x103
+status                  : 0x10
+rev_id                  : 0x1    <= Not a transitional device
+prog_if                 : 0x0
+subclass                : 0x0 (UNKNOWN)
+class_code              : 0x3 (display)
+cl_size                 : 0x0
+lat_timer               : 0x0
+hdr_type                : 0x0 (device)
+bist                    : 0x0
+bars[0]                 : 0xfd800008
+bars[1]                 : 0x0
+bars[2]                 : 0xfe00000c
+bars[3]                 : 0x0
+bars[4]                 : 0xfebf0000
+bars[5]                 : 0x0
+cardbus_cis_ptr         : 0x0
+subsys_vendor_id        : 0x1af4
+subsys_id               : 0x1100
+exp_rom_bar             : 0xfebe0000
+cap_ptr                 : 0x98
+rsvd[0]                 : 0x0
+rsvd[1]                 : 0x0
+rsvd[2]                 : 0x0
+rsvd[3]                 : 0x0
+rsvd[4]                 : 0x0
+rsvd[5]                 : 0x0
+rsvd[6]                 : 0x0
+intr_line               : 0xa
+intr_pin                : 0x1
+min_grant               : 0x0
+max_latency             : 0x0
+data                    : 0x090010010200000000d03f0000100000094010030200000000e03f0000100000095010040200000000f03f0000100000096014020200000000004000000040000010000009701405000000000000000000000000000000001184020004000000040800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+capabilities            : 0x11 (MSI-X) 0x09 (VendorSpecific) 0x09 (VendorSpecific) 0x09 (VendorSpecific) 0x09 (VendorSpecific) 0x09 (VendorSpecific) 
+
+
+
+ */
 #include <nautilus/irq.h>
 
 #include <dev/pci.h>
-#include <dev/virtio_blk.h>
+#include <dev/virtio_gpu.h>
 
-#ifndef NAUT_CONFIG_DEBUG_VIRTIO_BLK
+#ifndef NAUT_CONFIG_DEBUG_VIRTIO_GPU
 #undef DEBUG_PRINT
 #define DEBUG_PRINT(fmt, args...)
 #endif
 
-#define INFO(fmt, args...) INFO_PRINT("virtio_blk: " fmt, ##args)
-#define DEBUG(fmt, args...) DEBUG_PRINT("virtio_blk: " fmt, ##args)
-#define ERROR(fmt, args...) ERROR_PRINT("virtio_blk: " fmt, ##args)
+#define INFO(fmt, args...) INFO_PRINT("virtio_gpu: " fmt, ##args)
+#define DEBUG(fmt, args...) DEBUG_PRINT("virtio_gpu: " fmt, ##args)
+#define ERROR(fmt, args...) ERROR_PRINT("virtio_gpu: " fmt, ##args)
 
 #define FBIT_ISSET(features, bit) ((features) & (0x01 << (bit)))
 #define FBIT_SETIF(features_out, features_in, bit) if (FBIT_ISSET(features_in,bit)) { features_out |= (0x01 << (bit)) ; }
@@ -46,111 +137,147 @@
     }
 
 
-#define HACKED_LEGACY_VECTOR 0xe5
-#define HACKED_LEGACY_IRQ    (HACKED_LEGACY_VECTOR - 32)
 
-
-#define VIRTIO_BLK_OFF_CONFIG(v)     (virtio_pci_device_regs_start_legacy(v) + 0)
-
-#define VIRTIO_BLK_REQUEST_QUEUE  0 // virtqueue index 
-
-#define VIRTIO_BLK_T_IN           0 // read request
-#define VIRTIO_BLK_T_OUT          1 // write request
-#define VIRTIO_BLK_T_FLUSH        4 // flush request
-
-#define VIRTIO_BLK_S_OK           0 // success
-#define VIRTIO_BLK_S_IOERR        1 // host or guest error
-#define VIRTIO_BLK_S_UNSUPP       2 // unsupported by host
+#define VIRTIO_GPU_OFF_CONFIG(v)     (virtio_pci_device_regs_start(v) + 0)
 
 #define HEADER_DESC_LEN           16  // header descriptor length
 #define STATUS_DESC_LEN           1   // status descriptor length
 
 
-
-/* Maximum size of any single segment is in "size_max" */
-#define VIRTIO_BLK_F_SIZE_MAX		1
-
-/* Maximum number of segments in a request in in "seg_max" */
-#define VIRTIO_BLK_F_SEG_MAX		2
-
-/* Disk-style geometry specified in "geometry" */
-#define VIRTIO_BLK_F_GEOMETRY		4
-
-/* Devie is read-only */
-#define VIRTIO_BLK_F_RO				5
-
-/* Block size of disk is in "blk_size" */
-#define VIRTIO_BLK_F_BLK_SIZE   	6
-
-/* Cache lush command support */
-#define VIRTIO_BLK_F_FLUSH      	9    
-
-/* Device exports information on optimal I/O alignment. */
-#define VIRTIO_BLK_F_TOPOLOGY   	10
-
-/* Device can toggle its cache between writeback andw ritethrough modes. */
-#define VIRTIO_BLK_F_CONFIG_WCE  	11   
-
-/* Legacy Interface: Feature bits */
-
-/* Host supports request barriers */ 
-#define VIRTIO_BLK_F_BARRIER		0 
-
-/* Device supports a scsi packet commands */
-#define VIRTIO_BLK_F_SCSI       	7
-
-
 static uint64_t num_devs = 0;
 
-struct virtio_blk_dev {
-    struct nk_block_dev         *blk_dev;     // nautilus block device
-    struct virtio_pci_dev       *virtio_dev;  // nautilus pci device
-    struct virtio_blk_config    *blk_config;  // virtio blk configuration
-    struct virtio_blk_callb     *blk_callb;   // virtio blk callbacks
+struct virtio_gpu_dev {
+    // Does not currently exist
+    struct nk_dev               *gpu_dev;     // nautilus gpu device
+    
+    struct virtio_pci_dev       *virtio_dev;  // nautilus virtio device
 };
 
-struct virtio_blk_config {
-    uint64_t capacity;  // device size
-    uint32_t size_max;  // max size of any single descriptor 
-    uint32_t seg_max;   // total number of descriptors 
-    struct virtio_blk_geometry {
-        uint16_t cylinders;
-        uint8_t heads;
-        uint8_t sectors;
-    } geometry;         // device geometry 
-    uint32_t blk_size;  // optimal sector size
+
+#define u8   uint8_t
+#define le8  uint8_t
+#define le16 uint16_t
+#define le32 uint32_t
+#define le64 uint64_t
+
+// Definitions from the spec
+
+// device capabilities
+#define VIRTIO_GPU_F_VIRGL 0x1
+#define VIRTIO_GPU_F_EDID  0x2
+
+#define VIRTIO_GPU_EVENT_DISPLAY (1 << 0)
+struct virtio_gpu_config {
+    le32 events_read;
+    le32 events_clear;
+    le32 num_scanouts;
+    le32 reserved;
 };
 
-struct virtio_blk_req {
-    uint32_t type;      // read or write request
-    uint32_t reserved;  // write back feature
-    uint64_t sector;    // offset for read or write to occur
-    uint8_t *data;      // ... not used
-    uint8_t status;     // written by device
+enum virtio_gpu_ctrl_type {
+    /* 2d commands */
+    VIRTIO_GPU_CMD_GET_DISPLAY_INFO = 0x0100,
+    VIRTIO_GPU_CMD_RESOURCE_CREATE_2D,
+    VIRTIO_GPU_CMD_RESOURCE_UNREF,
+
+    VIRTIO_GPU_CMD_SET_SCANOUT,
+    VIRTIO_GPU_CMD_RESOURCE_FLUSH,
+    VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D,
+    VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING,
+    VIRTIO_GPU_CMD_RESOURCE_DETACH_BACKING,
+    VIRTIO_GPU_CMD_GET_CAPSET_INFO,
+    VIRTIO_GPU_CMD_GET_CAPSET,
+    VIRTIO_GPU_CMD_GET_EDID,
+    /* cursor commands */
+    VIRTIO_GPU_CMD_UPDATE_CURSOR = 0x0300,
+    VIRTIO_GPU_CMD_MOVE_CURSOR,
+    /* success responses */
+    VIRTIO_GPU_RESP_OK_NODATA = 0x1100,
+    VIRTIO_GPU_RESP_OK_DISPLAY_INFO,
+    VIRTIO_GPU_RESP_OK_CAPSET_INFO,
+    VIRTIO_GPU_RESP_OK_CAPSET,
+    VIRTIO_GPU_RESP_OK_EDID,
+    /* error responses */
+    VIRTIO_GPU_RESP_ERR_UNSPEC = 0x1200,
+    VIRTIO_GPU_RESP_ERR_OUT_OF_MEMORY,
+    VIRTIO_GPU_RESP_ERR_INVALID_SCANOUT_ID,
+    VIRTIO_GPU_RESP_ERR_INVALID_RESOURCE_ID,
+    VIRTIO_GPU_RESP_ERR_INVALID_CONTEXT_ID,
+    VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER,
 };
 
-struct virtio_blk_callb {
-    void *context;
-    void (*callback)(nk_block_dev_status_t, void *);
+#define VIRTIO_GPU_FLAG_FENCE (1 << 0)
+
+struct virtio_gpu_ctrl_hdr {
+        le32 type;
+        le32 flags;
+        le64 fence_id;
+        le32 ctx_id;
+        le32 padding;
+};
+
+
+// for VIRTIO_GPU_CMD_GET_DISPLAY_INFO request
+
+#define VIRTIO_GPU_MAX_SCANOUTS 16
+
+struct virtio_gpu_rect {
+    le32 x;
+    le32 y;
+    le32 width;
+    le32 height;
+};
+
+struct virtio_gpu_resp_display_info {
+    struct virtio_gpu_ctrl_hdr hdr;
+    struct virtio_gpu_display_one {
+	struct virtio_gpu_rect r;
+	le32 enabled;
+	le32 flags;
+    } pmodes[VIRTIO_GPU_MAX_SCANOUTS];
+};
+
+
+// for VIRTIO_GPU_CMD_GET_EDID
+struct virtio_gpu_get_edid {
+    struct virtio_gpu_ctrl_hdr hdr;
+    le32 scanout;
+    le32 padding;
+};
+
+struct virtio_gpu_resp_edid {
+    struct virtio_gpu_ctrl_hdr hdr;
+    le32 size;
+    le32 padding;
+    u8 edid[1024];
+};
+
+// for VIRTIO_GPU_CMD_RESOURCE_CREATE
+enum virtio_gpu_formats {
+    VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM  = 1,
+    VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM  = 2,
+    VIRTIO_GPU_FORMAT_A8R8G8B8_UNORM  = 3,
+    VIRTIO_GPU_FORMAT_X8R8G8B8_UNORM  = 4,
+    VIRTIO_GPU_FORMAT_R8G8B8A8_UNORM  = 67,
+    VIRTIO_GPU_FORMAT_X8B8G8R8_UNORM  = 68,
+    VIRTIO_GPU_FORMAT_A8B8G8R8_UNORM  = 121,
+    VIRTIO_GPU_FORMAT_R8G8B8X8_UNORM  = 134,
+};
+
+struct virtio_gpu_resource_create_2d {
+    struct virtio_gpu_ctrl_hdr hdr;
+    le32 resource_id;
+    le32 format;
+    le32 width;
+    le32 height;
 };
 
 /************************************************************
- ****************** block ops for kernel ********************
+ ****************** gpu ops for kernel ********************
  ************************************************************/
-static int get_characteristics(void *state, struct nk_block_dev_characteristics *c)
-{
-    if (!state || !c) {
-	ERROR("unable to get characteristics of block device\n");
-	return -1;
-    }
+// NONE EXIST CURRENTLY
 
-    struct virtio_blk_dev *dev = (struct virtio_blk_dev *) state;
-    c->block_size = dev->blk_config->blk_size;
-    c->num_blocks = dev->blk_config->capacity; 
-
-    return 0;
-}
-
+/*
 static void fill_hdr_desc(struct virtq *vq, struct virtio_blk_req *hdr, uint16_t hdr_index, uint16_t buf_index)
 {
     struct virtq_desc *hdr_desc = &vq->desc[hdr_index];
@@ -184,6 +311,8 @@ static void fill_stat_desc(struct virtq *vq, uint8_t *status, uint16_t stat_inde
     stat_desc->next = 0;
 }
 
+*/
+/*
 static int read_write_blocks(struct virtio_blk_dev *dev, uint64_t blocknum, uint64_t count, uint8_t *src_dest, void (*callback)(nk_block_dev_status_t, void *), void *context, uint8_t write) 
 {
     DEBUG("%s blocknum = %lu count = %lu buf = %p callback = %p context = %p\n", write ? "write" : "read", blocknum, count, src_dest, callback, context);
@@ -281,6 +410,7 @@ static struct nk_block_dev_int ops = {
     .write_blocks = write_blocks,
 };
 
+
 /************************************************************
  *************** interrupt handler & callback ***************
  ************************************************************/
@@ -290,10 +420,11 @@ static void teardown(struct virtio_pci_dev *dev)
     virtio_pci_virtqueue_deinit(dev);
 }
 
+/* 
 static int process_used_ring(struct virtio_blk_dev *dev) 
 {
     uint16_t hdr_desc_idx; 
-    void (*callback)(nk_block_dev_status_t, void *);
+    //void (*callback)(nk_block_dev_status_t, void *);
     void *context;
     struct virtio_pci_virtq *virtq = &dev->virtio_dev->virtq[VIRTIO_BLK_REQUEST_QUEUE];
     struct virtq *vq = &dev->virtio_dev->virtq[VIRTIO_BLK_REQUEST_QUEUE].vq;
@@ -317,7 +448,7 @@ static int process_used_ring(struct virtio_blk_dev *dev)
 	uint8_t status = hdr->status;
 	 
 	DEBUG("completion for descriptor at index %d with status: %d\n", hdr_desc_idx, status);
-	 
+
 	// grab corresponding callback
 	callback = dev->blk_callb[hdr_desc_idx].callback;
 	context = dev->blk_callb[hdr_desc_idx].context;
@@ -350,7 +481,7 @@ static int handler(excp_entry_t *exp, excp_vec_t vec, void *priv_data)
     struct virtio_blk_dev *dev = (struct virtio_blk_dev *) priv_data;
     
     // only for legacy style interrupt
-    if (dev->virtio_dev->itype == VIRTIO_PCI_LEGACY_INTERRUPT) {
+    if (dev->virtio_dev->itype == VIRTIO_PCI_LEGACY) {
         DEBUG("using legacy style interrupt\n");
         // read the interrupt status register, which will reset it to zero
         uint8_t isr = virtio_pci_read_regb(dev->virtio_dev, ISR_STATUS);
@@ -379,179 +510,63 @@ static int handler(excp_entry_t *exp, excp_vec_t vec, void *priv_data)
     return 0;
 }
 
+*/
+
 /*************************************************
  ******************** tests **********************
  *************************************************/
 
-static volatile int done=0;
-
-static void sudo_callback(nk_block_dev_status_t status, void *context)
-{
-    DEBUG("sudo_callback invoked: context = %s\n", (char *) context);
-    done = 1;
-}
-
-static int test_read(struct virtio_blk_dev *dev) 
-{
-    DEBUG("testing read...\n");
-    uint64_t blocknum = 0;
-    uint64_t count = 1;
-    uint32_t blk_size = dev->blk_config->blk_size;
-    uint8_t *src = malloc(count * blk_size); 
-
-    if (!src) {
-	ERROR("Failed to allocate space for read test\n");
-	return -1;
-    }
-    
-    DEBUG("free count before = %d\n", dev->virtio_dev->virtq[VIRTIO_BLK_REQUEST_QUEUE].nfree);
-    
-    uint16_t i;
-    for (i = 0; i < 16; i++) {
-	DEBUG("before: %x\n", *(src + i));
-    }
-
-    done = 0;
-    
-    if (read_blocks(dev, blocknum, count, src, sudo_callback, "test read_blocks")) {
-	ERROR("failed to test device\n");
-	free(src);
-	return -1;
-    }
-
-    while (!done) { }
-    
-    for (i = 0; i < 16; i++) {
-	DEBUG("result: %x\n", *(src + i));
-    }
-
-    free(src);
-    
-    return 0;
-}
-
-static int test_write(struct virtio_blk_dev *dev) 
-{
-    DEBUG("testing write...\n");
-    uint64_t blocknum = 512;
-    uint64_t count = 1;
-    uint32_t blk_size = dev->blk_config->blk_size;
-    uint8_t *src = malloc(count * blk_size); 
-    
-    if (!src) {
-	ERROR("Failed to allocate space for write test\n");
-	return -1;
-    }
-    
-    DEBUG("free count before = %d\n", dev->virtio_dev->virtq[VIRTIO_BLK_REQUEST_QUEUE].nfree);
-    
-    memset(src, 1, count * blk_size);
-
-    uint16_t i;
-    for (i = 0; i < 16; i++) {
-	DEBUG("before: %x\n", *(src + i));
-    }
-
-    done = 0;
-    
-    if (write_blocks(dev, blocknum, count, src, sudo_callback, "test read_blocks")) {
-	ERROR("failed to test device\n");
-	return -1;
-    }
-
-    while (!done) {}
-    
-    for (i = 0; i < 16; i++) {
-	DEBUG("result: %x\n", *(src+ i));
-    }
-
-    free(src);
-    
-    return 0;
-}
-
 /************************************************************
  ****************** device initialization *******************
  ************************************************************/
-uint64_t select_features(uint64_t features) 
+static uint64_t select_features(uint64_t features) 
 {
     DEBUG("device features: 0x%0lx\n",features);
-    DEBUG_FBIT(features, VIRTIO_BLK_F_SIZE_MAX);
-    DEBUG_FBIT(features, VIRTIO_BLK_F_SEG_MAX);
-    DEBUG_FBIT(features, VIRTIO_BLK_F_GEOMETRY);
-    DEBUG_FBIT(features, VIRTIO_BLK_F_RO);
-    DEBUG_FBIT(features, VIRTIO_BLK_F_BLK_SIZE);
-    DEBUG_FBIT(features, VIRTIO_BLK_F_FLUSH);
-    DEBUG_FBIT(features, VIRTIO_BLK_F_TOPOLOGY);
-    DEBUG_FBIT(features, VIRTIO_BLK_F_CONFIG_WCE);
-    DEBUG_FBIT(features, VIRTIO_BLK_F_BARRIER);
-    DEBUG_FBIT(features, VIRTIO_BLK_F_SCSI);
-    DEBUG_FBIT(features, VIRTIO_F_NOTIFY_ON_EMPTY);
-    DEBUG_FBIT(features, VIRTIO_F_ANY_LAYOUT);
-    DEBUG_FBIT(features, VIRTIO_F_INDIRECT_DESC);
-    DEBUG_FBIT(features, VIRTIO_F_EVENT_IDX);
+    DEBUG_FBIT(features, VIRTIO_GPU_F_VIRGL);
+    DEBUG_FBIT(features, VIRTIO_GPU_F_EDID);
 
     // choose accepted features
     uint64_t accepted = 0;
 
-    FBIT_SETIF(accepted,features,VIRTIO_BLK_F_SIZE_MAX);
-    FBIT_SETIF(accepted,features,VIRTIO_BLK_F_SEG_MAX);
-    FBIT_SETIF(accepted,features,VIRTIO_BLK_F_GEOMETRY);
-    FBIT_SETIF(accepted,features,VIRTIO_BLK_F_RO);
-    FBIT_SETIF(accepted,features,VIRTIO_BLK_F_BLK_SIZE);
+    // probably should not feature accept either of these...
+    FBIT_SETIF(accepted,features,VIRTIO_GPU_F_VIRGL);
+    FBIT_SETIF(accepted,features,VIRTIO_GPU_F_EDID);
     
     DEBUG("features accepted: 0x%0lx\n", accepted);
     return accepted;
 }
 
-static void parse_config(struct virtio_blk_dev *d)
+
+static int handler(excp_entry_t *exp, excp_vec_t vec, void *priv_data)
 {
-    struct virtio_pci_dev *dev = d->virtio_dev;
-    
-    memset(d->blk_config,0,sizeof(*(d->blk_config)));
-    
-    // must have capacity...
-    d->blk_config->capacity = virtio_pci_read_regl(dev, VIRTIO_BLK_OFF_CONFIG(dev) + 0);
-    if (dev->feat_accepted & VIRTIO_BLK_F_SIZE_MAX) { 
-	d->blk_config->size_max = virtio_pci_read_regl(dev, VIRTIO_BLK_OFF_CONFIG(dev) + 8);
-    }
-    if (dev->feat_accepted & VIRTIO_BLK_F_SEG_MAX) { 
-	d->blk_config->seg_max = virtio_pci_read_regl(dev, VIRTIO_BLK_OFF_CONFIG(dev) + 12);
-    }
-    if (dev->feat_accepted & VIRTIO_BLK_F_GEOMETRY) { 
-	d->blk_config->geometry.cylinders = virtio_pci_read_regl(dev, VIRTIO_BLK_OFF_CONFIG(dev) + 16);
-	d->blk_config->geometry.heads = virtio_pci_read_regb(dev, VIRTIO_BLK_OFF_CONFIG(dev) + 18);
-	d->blk_config->geometry.sectors = virtio_pci_read_regb(dev, VIRTIO_BLK_OFF_CONFIG(dev) + 19);
-    }
-    if (dev->feat_accepted & VIRTIO_BLK_F_BLK_SIZE) { 
-	d->blk_config->blk_size = virtio_pci_read_regl(dev, VIRTIO_BLK_OFF_CONFIG(dev) + 20);
-    } else {
-	d->blk_config->blk_size = 512; // presumably...
-    }
-    
-    DEBUG("block device configuration layout\n");
-    DEBUG("capacity           = %d\n", d->blk_config->capacity);
-    DEBUG("size_max           = %d\n", d->blk_config->size_max);
-    DEBUG("seg_max            = %d\n", d->blk_config->seg_max);
-    DEBUG("geometry_cylinders = %d\n", d->blk_config->geometry.cylinders);
-    DEBUG("geometry_heads     = %d\n", d->blk_config->geometry.heads);
-    DEBUG("geometry_sectors   = %d\n", d->blk_config->geometry.sectors);
-    DEBUG("blk_size           = %d\n", d->blk_config->blk_size);
+    DEBUG("Interrupt invoked\n");
+    return 0;
 }
 
-int virtio_blk_init(struct virtio_pci_dev *dev)
+static int open(void *state)
+{
+    return 0;
+}
+
+static int close(void *state)
+{
+    return 0;
+}
+
+static struct nk_dev_int ops = {
+    .open = open,
+    .close = close,
+};
+
+
+int virtio_gpu_init(struct virtio_pci_dev *dev)
 {
     char buf[DEV_NAME_LEN];
-
-    if (!dev->model==VIRTIO_PCI_LEGACY_MODEL) {
-	ERROR("currently only supported with legacy model\n");
-	return -1;
-    }
     
     DEBUG("initialize device\n");
     
     // initialize block device
-    struct virtio_blk_dev *d = malloc(sizeof(*d));
+    struct virtio_gpu_dev *d = malloc(sizeof(*d));
     if (!d) {
 	ERROR("cannot allocate state\n");
 	return -1;
@@ -590,42 +605,15 @@ int virtio_blk_init(struct virtio_pci_dev *dev)
     dev->teardown = teardown;
     d->virtio_dev = dev;
     
-    // allocate callback array
-    d->blk_callb = malloc(dev->virtq[0].vq.qsz * sizeof(struct virtio_blk_callb));
+    //parse_config(d);
     
-    DEBUG("allocated %d callbacks at %p\n", dev->virtq[0].vq.qsz, d->blk_callb);
+    // register virtio gpu device, currently just as a generic device
+    snprintf(buf,DEV_NAME_LEN,"virtio-gpu%u",__sync_fetch_and_add(&num_devs,1));
+    d->gpu_dev = nk_dev_register(buf,NK_DEV_GENERIC,0,&ops,d);			       
     
-    if (!d->blk_callb) {
-	ERROR("failed to allocate callback array\n");
-	virtio_pci_virtqueue_deinit(dev);
-	free(d);
-	return -1;
-    }
-    
-    // allocate virtio block configuration
-    d->blk_config = malloc(sizeof(struct virtio_blk_config));
-    
-    DEBUG("allocated virtio block config struct at %p for %hhx bytes\n", d->blk_callb, sizeof(struct virtio_blk_config));
-    
-    if (!d->blk_config) {
-	ERROR("failed to allocate virtio block config struct\n");
-	virtio_pci_virtqueue_deinit(dev);
-	free(d->blk_callb);
-	free(d);
-	return -1;
-    }
-    
-    parse_config(d);
-    
-    // register virtio block device
-    snprintf(buf,DEV_NAME_LEN,"virtio-blk%u",__sync_fetch_and_add(&num_devs,1));
-    d->blk_dev = nk_block_dev_register(buf,0,&ops,d);			       
-    
-    if (!d->blk_dev) {
+    if (!d->gpu_dev) {
 	ERROR("failed to register block device\n");
 	virtio_pci_virtqueue_deinit(dev);
-	free(d->blk_config);
-	free(d->blk_callb);
 	free(d);
 	return -1;
     }
@@ -690,24 +678,9 @@ int virtio_blk_init(struct virtio_pci_dev *dev)
 	}
 	
     } else {
-	
-	DEBUG("setting up interrupts via legacy path at 0x%x\n",HACKED_LEGACY_VECTOR);
-	INFO("THIS HACKED LEGACY INTERRUPT SETUP IS PROBABLY NOT WHAT YOU WANT\n");
 
-        if (register_int_handler(HACKED_LEGACY_VECTOR, handler, d)) {
-            ERROR("Failed to register int handler\n");
-            return -1;
-        }
-	
-	nk_unmask_irq(HACKED_LEGACY_IRQ);
-	
-	// for (i=0; i<256; i++) { nk_umask_irq(i); }
-	
-        // enable interrupts in PCI space
-        uint16_t cmd = pci_dev_cfg_readw(p,0x4);
-        cmd &= ~0x0400;
-        pci_dev_cfg_writew(p,0x4,cmd);
-	
+	ERROR("This device must operate with MSI-X\n");
+	return -1;
     }
     
     DEBUG("device inited\n");
