@@ -24,9 +24,10 @@ int test_ompbench()
     arraybench_main(1, args);
 #endif
 
+#if 0
     args[0]="taskbench";
     taskbench_main(1, args);
-
+#endif
 
 #if 1
     args[0]="schedbench";

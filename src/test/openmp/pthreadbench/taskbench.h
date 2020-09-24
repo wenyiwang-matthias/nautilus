@@ -30,78 +30,37 @@
 *                                                                           *
 ****************************************************************************/
 
-#ifndef COMMON_H
-#define COMMON_H
+#ifndef TASKBENCH_H
+#define TASKBENCH_H
 
-#include <nautilus/nautilus.h>
+static void refer(void);
 
-#define printf(...) nk_vc_printf(__VA_ARGS__)
+void refer2(void);
 
-#define atof(x) ((float)atoi(x))
+void stats(double*, double*);
 
-#define EXIT_FAILURE -1
-#define EXIT_SUCCESS 0
-#define exit(x) panic("exit from omptest\n");
+void testParallelTaskGeneration(void);
 
-#include <rt/openmp/openmp.h>
-static inline double sqrt(double x)
-{
-    double ret;
-    asm volatile(
-		 "movq %1, %%xmm0 \n"
-		 "sqrtsd %%xmm0, %%xmm1 \n"
-		 "movq %%xmm1, %0 \n"
-		 : "=r"(ret)
-		 : "g"(x)
-		 : "xmm0", "xmm1", "memory"
-		 );
-    return ret;
-}
+void testMasterTaskGeneration(void);
 
-#define fabs(x) __builtin_fabs(x)
+void testMasterTaskGenerationWithBusySlaves(void);
 
-#define DEFAULT_DELAY_LENGTH -1 // -1 means the delay length should be auto generated
-#define DEFAULT_OUTER_REPS 20   // Outer repetitions
-#define DEFAULT_TEST_TARGET_TIME 1000.0 // Test Target time in microseconds.
-#ifdef SCHEDBENCH
-#define DEFAULT_DELAY_TIME 15.0  // Default delaytime in microseconds for schedbench
-#else
-#define DEFAULT_DELAY_TIME 0.10  // Default delaytime in microseconds
-#endif
+void testNestedTaskGeneration(void);
 
-extern int nthreads;              // Number of OpenMP threads
-extern int delaylength;           // The number of iterations to delay for
-extern int outerreps;             // Outer repetitions
-extern unsigned long innerreps;   // Inner repetitions
-extern double delaytime;          // Delay time in microseconds
-extern double targettesttime;     // The length of time in microseconds the test
-                                  // should run for
-extern double *times;             // Array to store results in
+void testNestedMasterTaskGeneration(void);
 
-void ompbench_init(int argc, char **argv);
+void testTaskWait(void);
 
-void initreference(char *name);
+void testTaskBarrier(void);
 
-void finalisereference(char *name);
+void testConditionalTaskGeneration(void);
 
-void intitest(char *name);
+void testBranchTaskGeneration(void);
 
-void finalisetest(char *name);
+void branchTaskTree(int tree_level);
 
-double getclock();
+void testLeafTaskGeneration(void);
 
-void delay(int delaylength);
+void leafTaskTree(int tree_level);
 
-void array_delay(int delaylength, double a[1]);
-
-int getdelaylengthfromtime(double delaytime);
-
-int returnfalse(void);
-
-void finalise(void);
-
-void benchmark(char *name, void (*test)(void));
-
-void reference(char *name, void (*refer)(void));
-
-#endif //COMMON_H
+#endif //TASKBENCH_H

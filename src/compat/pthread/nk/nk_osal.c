@@ -7,6 +7,8 @@
 #include <nautilus/semaphore.h>
 #include <nautilus/waitqueue.h>
 
+#define BOGUS_FUN_ERR() ERROR_PRINT("Function (%s) is BOGUS\n", __func__)
+#define BOGUS() BOGUS_FUN_ERR()
 
 #define STATE_UNLOCK(a,b) spin_unlock_irq_restore(a,b)
 #define STATE_TRY_LOCK(a,b) spin_try_lock_irq_save(a,b)
@@ -16,7 +18,6 @@
 
 #define ZOMBIE 200  //after busy wait for ZOMBIE time check condition
 #define ZOMBIE_mode true //Put to sleep if true after ZOMBIE time
-
 
 //retrive osHandle from thread
 #define poffsetof(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
@@ -225,7 +226,9 @@ pte_osResult pte_osThreadExitAndDelete(pte_osThreadHandle handle){
  * @return Thread successfully canceled.
  *=======================================================================================*/
 pte_osResult pte_osThreadCancel(pte_osThreadHandle handle){
-   ERROR("osThreadCancel \n");
+
+   BOGUS();
+   DEBUG("osThreadCancel\n");
    return PTE_OS_GENERAL_FAILURE;
 
    handle->signal = NK_THREAD_CANCEL;
@@ -239,8 +242,10 @@ pte_osResult pte_osThreadCancel(pte_osThreadHandle handle){
 //CANCEL not supported
 pte_osResult pte_osThreadCheckCancel(pte_osThreadHandle handle){
 
-    ERROR("osThreadCheckCancel\n");
+    BOGUS();
+    DEBUG("osThreadCheckCancel\n");
     return PTE_OS_OK;
+
     nk_thread_t * thethread = (nk_thread_t*) handle->tid;
     
     if (thethread->status ==NK_THR_EXITED){
@@ -301,13 +306,13 @@ pte_osResult pte_osSemaphoreCreate(int initialValue, pte_osSemaphoreHandle *pHan
   spinlock_init(&((*pHandle)->lock));
   (*pHandle)->count = 0;
 
-  (*pHandle)->wait_queue = nk_wait_queue_create(NULL);
+  /* (*pHandle)->wait_queue = nk_wait_queue_create(NULL); */
 
-  if (!(*pHandle)->wait_queue) {
-        free(*pHandle);
-        ERROR("Failed to allocate wait queue\n");
-        return  PTE_OS_NO_RESOURCES;
-    }
+  /* if (!(*pHandle)->wait_queue) { */
+  /*       free(*pHandle); */
+  /*       ERROR("Failed to allocate wait queue\n"); */
+  /*       return  PTE_OS_NO_RESOURCES; */
+  /*   } */
   
   return PTE_OS_OK;
 }
@@ -341,14 +346,16 @@ pte_osResult pte_osSemaphorePost(pte_osSemaphoreHandle handle, int count){
     
     handle->flags = STATE_LOCK(&(handle->lock));
     handle->count += count;
-    // int old = pte_osAtomicAdd(&(handle->count), count);
-    int a = count;
-    if(a > handle->sleepcount){
-      a = handle->sleepcount;
-    }
-    handle->sleepcount -= a;
-    while(a--){
-       nk_wait_queue_wake_one(handle->wait_queue);
+    if(handle->sleepcount > 0){
+      // int old = pte_osAtomicAdd(&(handle->count), count);
+      int a = count;
+      if(a > handle->sleepcount){
+	a = handle->sleepcount;
+      }
+      handle->sleepcount -= a;
+      while(a--){
+	nk_wait_queue_wake_one(handle->wait_queue);
+      }
     }
     
     STATE_UNLOCK(&(handle->lock), handle->flags);
@@ -369,7 +376,6 @@ pte_osResult pte_osSemaphorePost(pte_osSemaphoreHandle handle, int count){
 
 pte_osResult pte_osSemaphorePend(pte_osSemaphoreHandle handle, unsigned int *pTimeout){
 
- 
    int busy_wait = 0;
  
    if(pTimeout == NULL){
@@ -408,8 +414,18 @@ pte_osResult pte_osSemaphorePend(pte_osSemaphoreHandle handle, unsigned int *pTi
         // disable preemption early since interrupts may remain on given our locking model
         preempt_disable();
 	t->status = NK_THR_WAITING;
-        nk_wait_queue_enqueue(handle->wait_queue,t);
-        handle->sleepcount++;
+	if(!handle->wait_queue){
+
+	  handle->wait_queue = nk_wait_queue_create(NULL);
+
+	  if (!handle->wait_queue) {
+	    free(handle);
+	    ERROR("Failed to allocate wait queue\n");
+	    return  PTE_OS_NO_RESOURCES;
+	  }
+        }
+	nk_wait_queue_enqueue(handle->wait_queue,t);
+	handle->sleepcount++;
 	//pte_osAtomicIncrement(&(handle->sleepcount));
 
 	// and go to sleep - this will also release the lock
@@ -460,6 +476,7 @@ pte_osResult pte_osSemaphorePend(pte_osSemaphoreHandle handle, unsigned int *pTi
 pte_osResult pte_osSemaphoreCancellablePend(pte_osSemaphoreHandle handle, unsigned int *pTimeout){
 
      //cancel not allowed !!!
+     BOGUS();
      return pte_osSemaphorePend(handle, pTimeout);
 }
 

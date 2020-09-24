@@ -30,78 +30,102 @@
 *                                                                           *
 ****************************************************************************/
 
-#ifndef COMMON_H
-#define COMMON_H
+#include "common.h"
+#include "arraybench.h"
 
-#include <nautilus/nautilus.h>
+double btest[IDA];
+double atest[IDA];
 
-#define printf(...) nk_vc_printf(__VA_ARGS__)
+#pragma omp threadprivate (btest)
 
-#define atof(x) ((float)atoi(x))
+int arraybench_main(int argc, char **argv) {
 
-#define EXIT_FAILURE -1
-#define EXIT_SUCCESS 0
-#define exit(x) panic("exit from omptest\n");
+    ompbench_init(argc, argv);
 
-#include <rt/openmp/openmp.h>
-static inline double sqrt(double x)
-{
-    double ret;
-    asm volatile(
-		 "movq %1, %%xmm0 \n"
-		 "sqrtsd %%xmm0, %%xmm1 \n"
-		 "movq %%xmm1, %0 \n"
-		 : "=r"(ret)
-		 : "g"(x)
-		 : "xmm0", "xmm1", "memory"
-		 );
-    return ret;
-}
+    /* GENERATE REFERENCE TIME */
+    reference("reference time 1", &refer);
 
-#define fabs(x) __builtin_fabs(x)
+    char testName[32];
 
-#define DEFAULT_DELAY_LENGTH -1 // -1 means the delay length should be auto generated
-#define DEFAULT_OUTER_REPS 20   // Outer repetitions
-#define DEFAULT_TEST_TARGET_TIME 1000.0 // Test Target time in microseconds.
-#ifdef SCHEDBENCH
-#define DEFAULT_DELAY_TIME 15.0  // Default delaytime in microseconds for schedbench
-#else
-#define DEFAULT_DELAY_TIME 0.10  // Default delaytime in microseconds
+    /* TEST  PRIVATE */
+    sprintf(testName, "PRIVATE %d", IDA);
+    benchmark(testName, &testprivnew);
+
+    /* TEST  FIRSTPRIVATE */
+    sprintf(testName, "FIRSTPRIVATE %d", IDA);
+    benchmark(testName, &testfirstprivnew);
+
+#ifdef OMPVER2
+    /* TEST  COPYPRIVATE */
+    sprintf(testName, "COPYPRIVATE %d", IDA);
+    benchmark(testName, &testcopyprivnew);
 #endif
 
-extern int nthreads;              // Number of OpenMP threads
-extern int delaylength;           // The number of iterations to delay for
-extern int outerreps;             // Outer repetitions
-extern unsigned long innerreps;   // Inner repetitions
-extern double delaytime;          // Delay time in microseconds
-extern double targettesttime;     // The length of time in microseconds the test
-                                  // should run for
-extern double *times;             // Array to store results in
+#if 0
+    /* TEST  THREADPRIVATE - COPYIN */
+    sprintf(testName, "COPYIN %d", IDA);
+    benchmark(testName, &testthrprivnew);
 
-void ompbench_init(int argc, char **argv);
+#endif
 
-void initreference(char *name);
+    finalise();
 
-void finalisereference(char *name);
+    return EXIT_SUCCESS;
 
-void intitest(char *name);
+}
 
-void finalisetest(char *name);
+static void refer() {
+    int j;
+    double a[1];
+    for (j = 0; j < innerreps; j++) {
+	array_delay(delaylength, a);
+    }
+}
 
-double getclock();
+void testfirstprivnew() {
+    int j;
+    for (j = 0; j < innerreps; j++) {
+#pragma omp parallel firstprivate(atest)
+	{
+	    array_delay(delaylength, atest);
+	}
+    }
+}
 
-void delay(int delaylength);
+void testprivnew() {
+    int j;
+    for (j = 0; j < innerreps; j++) {
+#pragma omp parallel private(atest)
+	{
+	    array_delay(delaylength, atest);
+	}
+    }
+}
 
-void array_delay(int delaylength, double a[1]);
+#ifdef OMPVER2
+void testcopyprivnew()
+{
+    int j;
+    for (j=0; j<innerreps; j++) {
+#pragma omp parallel private(atest)
+	{
+#pragma omp single copyprivate(atest)
+		{
+	    	array_delay(delaylength, atest);
+		}
+    	}
+    }
+}
 
-int getdelaylengthfromtime(double delaytime);
+#endif
 
-int returnfalse(void);
+void testthrprivnew() {
+    int j;
+    for (j = 0; j < innerreps; j++) {
+#pragma omp parallel copyin(btest)
+	{
+	    array_delay(delaylength, btest);
+	}
+    }
 
-void finalise(void);
-
-void benchmark(char *name, void (*test)(void));
-
-void reference(char *name, void (*refer)(void));
-
-#endif //COMMON_H
+}

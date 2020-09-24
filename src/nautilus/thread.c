@@ -369,7 +369,9 @@ nk_thread_create (nk_thread_fun_t fun,
     t->aspace = get_cur_thread()->aspace;
 
     // a thread joins its creator's HW TLS space
-    t->hwtls = get_cur_thread()->hwtls;
+    void* tlsadd = (void*) malloc(16);
+    t->hwtls = tlsadd;//get_cur_thread()->hwtls;
+    //t->hwtls = get_cur_thread()->hwtls;
     
     t->fun = fun;
     t->input = input;
